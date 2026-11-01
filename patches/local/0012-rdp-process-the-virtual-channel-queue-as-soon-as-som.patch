@@ -1,0 +1,75 @@
+From f2a626ee8d90c71605cae8b50339f538fb9f0160 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 18:33:01 +0900
+Subject: [PATCH] rdp: process the virtual channel queue as soon as something
+ is queued
+
+WTSVirtualChannelWrite() only queues the data (FreeRDP's vcm->queue). It is
+sent when WTSVirtualChannelManagerCheckFileDescriptor() runs, and that was
+called only from rdp_client_activity(), i.e. when the client sent something,
+and from a few wait loops. Graphics redirection presents, window orders and
+the like therefore stayed in the queue until the next input event or
+acknowledgement arrived: the last update before an idle period was shown late
+(a key press or a mouse move made it appear), and acknowledgements came late.
+
+The events[] array has a slot reserved for the queue's file descriptor
+("+1 for WTSVirtualChannelManagerGetFileDescriptor"), but nothing used it:
+that function is deprecated in FreeRDP 3. Watch the queue's event handle
+(WTSVirtualChannelManagerGetEventHandle) instead and process the queue
+whenever it becomes readable.
+---
+ libweston/backend-rdp/rdp.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/libweston/backend-rdp/rdp.c b/libweston/backend-rdp/rdp.c
+index 3ade3457..a98161c6 100644
+--- a/libweston/backend-rdp/rdp.c
++++ b/libweston/backend-rdp/rdp.c
+@@ -952,6 +952,22 @@ rdp_peer_context_free(freerdp_peer* client, RdpPeerContext* context)
+ }
+ 
+ 
++/* Data written to a virtual channel (e.g. the graphics redirection present, window orders) is only queued by
++ * WTSVirtualChannelWrite(); it is sent when the queue is processed. Process it as soon as something is queued, not
++ * only when the client happens to send something (which made the last update wait for the next key or mouse event). */
++static int
++rdp_vcm_activity(int fd, uint32_t mask, void *data)
++{
++	freerdp_peer *client = (freerdp_peer *)data;
++	RdpPeerContext *peerCtx = (RdpPeerContext *)client->context;
++
++	if (peerCtx && peerCtx->vcm &&
++	    !WTSVirtualChannelManagerCheckFileDescriptor(peerCtx->vcm))
++		weston_log("failed to flush the FreeRDP virtual channel queue for %p\n", client);
++
++	return 0;
++}
++
+ static int
+ rdp_client_activity(int fd, uint32_t mask, void *data)
+ {
+@@ -1271,6 +1287,21 @@ xf_peer_activate(freerdp_peer* client)
+ 			goto error_exit;
+ 		}
+ 
++		{
++			/* wake up when something is queued for sending (the slot reserved for it in events[]) */
++			HANDLE vcm_handle = WTSVirtualChannelManagerGetEventHandle(peerCtx->vcm);
++			int vcm_fd = vcm_handle ? GetEventFileDescriptor(vcm_handle) : -1;
++
++			if (vcm_fd >= 0) {
++				struct wl_event_loop *vcm_loop = wl_display_get_event_loop(b->compositor->wl_display);
++
++				peerCtx->events[MAX_FREERDP_FDS] = wl_event_loop_add_fd(vcm_loop, vcm_fd,
++						WL_EVENT_READABLE, rdp_vcm_activity, client);
++			} else {
++				weston_log("unable to get the virtual channel queue handle, updates may be delayed\n");
++			}
++		}
++
+ 		/* RAIL, clipboard, Audio playback/capture requires dynamic virtual channel */
+ 		if (!rdp_drdynvc_init(client)) {
+ 			weston_log("%s: rdp_drdynvc_init failed.\n", __func__);
+-- 
+2.56.0
+
