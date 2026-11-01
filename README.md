@@ -43,7 +43,7 @@ fcitx5 (Ubuntu 側、waylandim)                    msrdc.exe (Windows)
 | パス | 内容 |
 | --- | --- |
 | `patches/mr1667/1667.patch` | Weston の MR !1667（RDP-RAIL の upstream への移植、gpotter2 作）。**無改変**。 |
-| `patches/local/*.patch` | MR の上に重ねた 11 個の修正と機能（[docs/patches.md](docs/patches.md)）。 |
+| `patches/local/*.patch` | MR の上に重ねた 12 個の修正と機能（[docs/patches.md](docs/patches.md)）。 |
 | `scripts/` | 設定・ソース取得・ビルド・インストール・ロールバック・起動時の自動適用。 |
 | `wrap/` | システムディストロ内で、Ubuntu 側でビルドした Weston を Ubuntu のローダ経由で動かす。 |
 | `src/wslgd-notify.c` | WSLGd が待つ MS 製モジュール `wslgd-notify.so` の代用品。 |

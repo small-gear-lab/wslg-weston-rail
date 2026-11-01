@@ -69,5 +69,9 @@ Weston は、サーフェスごとに RAIL の窓を作る。**サブサーフ�
 内容は共有メモリのバッファにコピーされ、`PresentBuffer` で msrdc に渡される。msrdc は表示すると、窓ごとの
 `present_buffer_ack` を返す。
 
+`PresentBuffer` や窓の命令は、FreeRDP の仮想チャネルのキュー（`vcm->queue`）に**積まれるだけ**で、実際に送られるのは
+`WTSVirtualChannelManagerCheckFileDescriptor()` が呼ばれたとき。そのため、キューのイベントハンドルを Weston のイベントループで
+監視している（パッチ 0012）。これが無いと、クライアントから何か届くまで更新が送られない。
+
 更新のスキップ条件は、グローバルな `currentFrameId − acknowledgedFrameId >= 2`。present ID は窓ごとに増えるので、
 窓の多いクライアントでは、すぐに枠を使い切る。性能の詳細は [pitfalls.md](pitfalls.md)。

@@ -23,13 +23,14 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
 | 0005 | RAIL モードでは、出力のレンダーバッファを作らない | 2 枚目のモニタが接続されると、`pixman_renderer_create_renderbuffer: po` のアサーションで落ちた。 |
 | 0006、0007 | 内容が無く、一度も表示されていない窓を、隠したままにする | libweston がバッファの無いサーフェスにも寸法を持たせるため、「サイズ 0 → 何か」を表示と解釈して、タスクバーに空のアイコンが 2 つ出た。0006 の `weston_surface_has_content()` 判定は効かず、0007 でバッファの寸法で判定するようにした。 |
 | 0008 | RAIL では、覆われたサーフェスにも frame callback を返す | コアは、他の面に全面を覆われたサーフェスの frame callback と presentation feedback を送らない。入れ子の KWin は、黒の 1×1 バッファの親サーフェスを、描画入りのサブサーフェスで全面覆うため、完了通知が来ずに止まり、黒い窓のままだった。出力に `frame_done_when_occluded` を足した。 |
+| 0012 | 仮想チャネルのキューを、積まれたらすぐ処理する | **更新が、次の入力イベントまで送り出されない**（最後のキー入力の結果が、次のキーやマウスの動きで初めて出る）。`WTSVirtualChannelWrite()` はキューに積むだけで、送られるのは `WTSVirtualChannelManagerCheckFileDescriptor()` が呼ばれたとき。それをクライアントからの受信時にしか呼んでいなかった。`events[]` にキューの fd 用の枠が残っていたが、FreeRDP 3 で `WTSVirtualChannelManagerGetFileDescriptor` が廃止され、使われていなかった。キューのイベントハンドルを監視するようにした。詳細は [pitfalls.md](pitfalls.md)。 |
 
 ## 機能と性能
 
 | 番号 | 内容 |
 | --- | --- |
 | 0009 | `zwp_text_input_manager_v3` を追加する。詳細は [ime.md](ime.md)。 |
-| 0010 | gfxredir で、変わった範囲だけを msrdc に送る。ack を受け取った後に、スキップされた更新を再描画する。詳細は [pitfalls.md](pitfalls.md)。 |
+| 0010 | gfxredir で、変わった範囲だけを msrdc に送る。ack を受け取った後に、スキップされた更新を再描画する。**0012 の前に、「描画の遅れ」の原因を取り違えて入れたもの**で、0012 のあとにも必要かどうかは、外して比べていない（[pitfalls.md](pitfalls.md)）。 |
 | 0011 | カーソルのスプライトやドラッグアイコンの位置合わせで、サブサーフェスのビューが来ても abort しない。 |
 
 ## 既知の未対応
