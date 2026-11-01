@@ -1,0 +1,85 @@
+From 18b367e71b053516b760e227bd90ff68b7327da5 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 18:57:17 +0900
+Subject: [PATCH] desktop-shell: keep the input panel on the monitor that has
+ the text cursor
+
+The overlay panel (e.g. the candidate window of fcitx5) was placed at the
+bottom right of the text cursor without looking at the output, so a long panel
+near the bottom of a monitor stayed partly outside. Find the output that
+contains the cursor and keep the panel inside it: below the cursor if it fits,
+above it if not, and inside horizontally.
+
+Also resolve the text input surface to its main surface before asking for the
+view position. The keyboard focus can be on a sub-surface (e.g. a client side
+decoration), and weston_view_get_pos_offset_global() aborts for those.
+---
+ desktop-shell/input-panel.c | 50 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 46 insertions(+), 4 deletions(-)
+
+diff --git a/desktop-shell/input-panel.c b/desktop-shell/input-panel.c
+index 76be598a..67a83238 100644
+--- a/desktop-shell/input-panel.c
++++ b/desktop-shell/input-panel.c
+@@ -66,12 +66,54 @@ calc_input_panel_position(struct input_panel_surface *ip_surface, struct weston_
+ 	struct weston_coord_global pos;
+ 
+ 	if (ip_surface->panel) {
+-		struct weston_view *view = get_default_view(shell->text_input.surface);
++		struct weston_surface *ti_surface = shell->text_input.surface;
++		struct weston_view *view;
++		struct weston_coord_global origin;
++
++		/* The text input may be on a sub-surface (the focus can be on one, e.g. a client side
++		 * decoration): weston_view_get_pos_offset_global() aborts for those, so use the main surface. */
++		if (ti_surface == NULL)
++			return -1;
++		ti_surface = weston_surface_get_main_surface(ti_surface);
++		view = get_default_view(ti_surface);
+ 		if (view == NULL)
+ 			return -1;
+-		pos = weston_view_get_pos_offset_global(view);
+-		pos.c.x += shell->text_input.cursor_rectangle.x2;
+-		pos.c.y += shell->text_input.cursor_rectangle.y2;
++		origin = weston_view_get_pos_offset_global(view);
++		pixman_box32_t *cur = &shell->text_input.cursor_rectangle;
++		struct weston_output *out = NULL, *iter;
++		double cx = origin.c.x + cur->x1, cy = origin.c.y + cur->y1;
++
++		pos = origin;
++		pos.c.x += cur->x2;
++		pos.c.y += cur->y2;
++
++		/* Keep the panel on the monitor that has the text cursor: below the cursor if it fits, above it
++		 * if it does not, and inside the monitor horizontally. */
++		wl_list_for_each(iter, &shell->compositor->output_list, link) {
++			if (cx >= iter->pos.c.x && cx < iter->pos.c.x + iter->width &&
++			    cy >= iter->pos.c.y && cy < iter->pos.c.y + iter->height) {
++				out = iter;
++				break;
++			}
++		}
++		if (!out)
++			out = ip_surface->output;
++		if (out) {
++			double w = ip_surface->surface->width, h = ip_surface->surface->height;
++			double left = out->pos.c.x, top = out->pos.c.y;
++			double right = left + out->width, bottom = top + out->height;
++
++			if (pos.c.y + h > bottom)
++				pos.c.y = cy - h; /* above the cursor */
++			if (pos.c.y + h > bottom)
++				pos.c.y = bottom - h;
++			if (pos.c.y < top)
++				pos.c.y = top;
++			if (pos.c.x + w > right)
++				pos.c.x = right - w;
++			if (pos.c.x < left)
++				pos.c.x = left;
++		}
+ 	} else {
+ 		pos = ip_surface->output->pos;
+ 		pos.c.x += (ip_surface->output->width - ip_surface->surface->width) / 2;
+-- 
+2.56.0
+
