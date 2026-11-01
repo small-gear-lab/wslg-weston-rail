@@ -1,0 +1,119 @@
+From 9377cf303b82382ca651147a4d523567d36fa243 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 10:52:24 +0900
+Subject: [PATCH 04/11] rdp: offer standard RDP security without encryption on
+ a local connection (FreeRDP 3)
+
+Without TLS and without --rdp4-key the backend sets ENCRYPTION_LEVEL_NONE, which is what a client connecting
+over an external listener fd (vsock, WSLg) negotiates. FreeRDP 3 only offers standard RDP security when the
+server certificate is RSA 2048 and otherwise switches it off, so the negotiation failed with 'server supports
+only NLA Security'. Give it a built-in throw-away RSA 2048 key and certificate; nothing is encrypted with them.
+---
+ libweston/backend-rdp/rdp-local-cert.h | 60 ++++++++++++++++++++++++++
+ libweston/backend-rdp/rdp.c            | 16 +++++++
+ 2 files changed, 76 insertions(+)
+ create mode 100644 libweston/backend-rdp/rdp-local-cert.h
+
+diff --git a/libweston/backend-rdp/rdp-local-cert.h b/libweston/backend-rdp/rdp-local-cert.h
+new file mode 100644
+index 00000000..cb997b2a
+--- /dev/null
++++ b/libweston/backend-rdp/rdp-local-cert.h
+@@ -0,0 +1,60 @@
++/*
++ * A throw-away RSA 2048 key and self-signed certificate.
++ *
++ * FreeRDP 3 only offers "standard RDP security" when the server certificate is RSA 2048 (see
++ * freerdp_peer_initialize()). WSLg's Windows client connects over vsock and asks for exactly that, with
++ * ENCRYPTION_LEVEL_NONE: nothing is encrypted with this key and it protects nothing. It is only used when
++ * neither TLS (--rdp-tls-cert/--rdp-tls-key) nor --rdp4-key is configured, i.e. for a local connection.
++ */
++
++static const char rdp_local_cert_pem[] =
++	"-----BEGIN CERTIFICATE-----\n"
++	"MIIDGTCCAgGgAwIBAgIUYlnoUBMq16E8VV30RjWOr+/55l0wDQYJKoZIhvcNAQEL\n"
++	"BQAwGzEZMBcGA1UEAwwQd2VzdG9uLXJkcC1sb2NhbDAgFw0yNjExMDEwMTUwNTZa\n"
++	"GA8yMTI2MTAwODAxNTA1NlowGzEZMBcGA1UEAwwQd2VzdG9uLXJkcC1sb2NhbDCC\n"
++	"ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAIk1eiO3jLiLdBf4r/9B0h/Y\n"
++	"C9AVcubwPYgAan2YC/zugPxXug3UKS/tM1VCRImPkvRWRPQobvtmtNLAJ67u4mfA\n"
++	"bfpvRx22up3Ue29PbvaoV8jT5d4vhQPe9lEmyW5LliPT40j/hPSV41yt0SYNIkIX\n"
++	"Yycg8BVG8nYx2OM+o+TQGXOmGpM8gNkQUJWKlu3FIrN49NwUXDifa4e824llhSEi\n"
++	"YYPms9ftgb62sZGUVlYq13Bt9224XTdlD88Gy4EfxhQmO3IC7jN7UGCI58f7mlLT\n"
++	"KB6xEhQwlBgvWLDW68JUZtDA/0FOiQe6xj492+MQzb0S8wU1eUIMC5yIMMBl7kUC\n"
++	"AwEAAaNTMFEwHQYDVR0OBBYEFBzFJFqhy282UrrWOgyIQMSdaAH5MB8GA1UdIwQY\n"
++	"MBaAFBzFJFqhy282UrrWOgyIQMSdaAH5MA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI\n"
++	"hvcNAQELBQADggEBAHFoc9/A01G1EYRufdNqw15hI95Y14RxRVKu/Je+ijEsy7kT\n"
++	"rAerdZfCqSi/NPmFS2owEqp+yxM2wA8vrbY/9s70TIAXA1gpRv30NIyDXA6FHg9O\n"
++	"c/UN7P8F1KcgLWAKqvMh08dpx0mglN15/P+HWnymxzgxLgcqEER/XQlJNjpoBW73\n"
++	"pbHzF99zgN2lBOFjXEt2oyl+oOfwtvP9eGiMYtXp6wpn+FU19nB1kiuEvpKHJ2tZ\n"
++	"3OQM8OmwospUtyJG5RhApbbXteIAkKbTMVJlGq8X9i4sUNIxpkuN2pfvF1brvdIK\n"
++	"6Ea95pjB8pPzzQ02itlVaEDLejE2WbA/APGT6Ek=\n"
++	"-----END CERTIFICATE-----\n";
++
++static const char rdp_local_key_pem[] =
++	"-----BEGIN PRIVATE KEY-----\n"
++	"MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCJNXojt4y4i3QX\n"
++	"+K//QdIf2AvQFXLm8D2IAGp9mAv87oD8V7oN1Ckv7TNVQkSJj5L0VkT0KG77ZrTS\n"
++	"wCeu7uJnwG36b0cdtrqd1HtvT272qFfI0+XeL4UD3vZRJsluS5Yj0+NI/4T0leNc\n"
++	"rdEmDSJCF2MnIPAVRvJ2MdjjPqPk0BlzphqTPIDZEFCVipbtxSKzePTcFFw4n2uH\n"
++	"vNuJZYUhImGD5rPX7YG+trGRlFZWKtdwbfdtuF03ZQ/PBsuBH8YUJjtyAu4ze1Bg\n"
++	"iOfH+5pS0ygesRIUMJQYL1iw1uvCVGbQwP9BTokHusY+PdvjEM29EvMFNXlCDAuc\n"
++	"iDDAZe5FAgMBAAECggEAEQ47NQZjcSswjqxEoFu7tWajLUYFRuy1EVtP4XXNg67Y\n"
++	"DMYQ5Bgr2H/JQj9fCqR0tXel0Z3XEdwV/R6SsD2UmiYC5b8AXZKxxt27TD5ZAkMx\n"
++	"yk6Aw+ovRChqgPLr1hCCRMjZd2D/03FwVjxrA6pdSE7k7d+7yEFN8WBH4BOQxufi\n"
++	"rv5/mmik0A0GdimCXa3LlTLGOkcDZa0hfjQlG6QqbRGoa7zBbPeYURKwk+e2ad9+\n"
++	"refwftWH3cQ8iTREAc52Bdi1z/oj/5MerrgXWfeCJm7bZ0P5ZsS5brCdcjMRoTqS\n"
++	"uUIU0hEVyZIN1C/w1Q8XwVYtRH/m4aHD2yVQYJtS0QKBgQC/nb5jTSLM/fmVOsJN\n"
++	"7q5+ljv+v72OL+Fvm+I5thhs5Y0gAwKM/fjtCblNDmSVYMItOLMKMcEiRbW4EHtQ\n"
++	"W9iqIraEI9qqHC9Dg2N+SWo12bEDHqZTlYaM4729B8HT8qE0L1uzi8jkDB6lkPX3\n"
++	"FxHXfeaXJkKRqqvKKpsXzrgcDQKBgQC3T8eMwmR0X0P3kuhSUthxlXEEuLM0BDtY\n"
++	"0UO4wZ3CY6WMwLmA6DizSyLUiba2TZLBpdaJR6ekLO7DgDx5HdDBBbKpOKIJbiqf\n"
++	"Rp0vO0LPzjcQDUaKLlbPRZmfd/soTMNmC9o5VjbiKVpwFEAloC1BjtImxgohkYrK\n"
++	"BNSd8261GQKBgQCfChNqoiw/TpFn7fQ18OQ9xv4WzBhNuqn3E8ApvFz7jW+b4UOt\n"
++	"uGJyg36cWVTcswmXtRbNYEx34LoaAvwGz6S+Wb95X7TvOiN0esoKmG6iMYP9HeRZ\n"
++	"PaMGr0PdcGHNQ/XOtXv8QwpDVVfefbnZEvnJDQNl8uiPtMOPMdu2X+ppxQKBgCKs\n"
++	"37V7rB7rSmMRkgrIixLpTuiyu4tSZZuGckYHsfzsdotqhWyiAN/BjcQgjMRtZh5l\n"
++	"bXCocki3Cy9GGapbfnqUxlgGU3hvM3bPl7owfpHqkzXhHP/Uhi1NICMvQf48jxXF\n"
++	"ljEUYutjIS1kV0IGy6jECHK3MYFqE5PlWAbM3ps5AoGBALdZFEklE4yFqi+668mT\n"
++	"g6VJkj7JP8Qymlkeg6oOpI9gq7f4A++KQ+Q4slGEyzf90zL7XXwynOm8x+yVX98k\n"
++	"V8cpgC+qoKAXHaHOD6UUzBe2wOoAHI1LmmLSZZBnUVPpMS152xkYgjSV3nB+cmy0\n"
++	"gIXgW7mznYryHziEjKdLY+hY\n"
++	"-----END PRIVATE KEY-----\n";
++
+diff --git a/libweston/backend-rdp/rdp.c b/libweston/backend-rdp/rdp.c
+index ab4bc2fc..f69d89e1 100644
+--- a/libweston/backend-rdp/rdp.c
++++ b/libweston/backend-rdp/rdp.c
+@@ -45,6 +45,7 @@
+ #include <arpa/inet.h>
+ 
+ #include "rdp.h"
++#include "rdp-local-cert.h"
+ 
+ #include <winpr/version.h>
+ #include <winpr/input.h>
+@@ -2014,6 +2015,21 @@ rdp_peer_init(freerdp_peer *client, struct rdp_backend *b)
+ 	if (!is_tls_enabled(b) && !b->rdp_key) {
+ 		// Disable all encryption. This should be used for debug only.
+ 		freerdp_settings_set_uint32(settings, FreeRDP_EncryptionLevel, ENCRYPTION_LEVEL_NONE);
++
++		/* FreeRDP 3 only offers standard RDP security (the one a local client such as WSLg's msrdc
++		 * asks for over vsock) if the server certificate is RSA 2048: it switches it off otherwise and
++		 * the negotiation fails ("server supports only NLA Security"). Nothing is encrypted with this
++		 * key (ENCRYPTION_LEVEL_NONE), it is only there to satisfy that check. */
++		rdpCertificate *local_cert = freerdp_certificate_new_from_pem(rdp_local_cert_pem);
++		rdpPrivateKey *local_key = freerdp_key_new_from_pem(rdp_local_key_pem);
++		if (!local_cert || !local_key) {
++			weston_log("cannot load the built-in RSA key and certificate\n");
++			goto error_initialize;
++		}
++		if (!freerdp_settings_set_pointer_len(settings, FreeRDP_RdpServerCertificate, local_cert, 1))
++			goto error_initialize;
++		if (!freerdp_settings_set_pointer_len(settings, FreeRDP_RdpServerRsaKey, local_key, 1))
++			goto error_initialize;
+ 	}
+ #else
+ 	if (b->rdp_key)
+-- 
+2.56.0
+

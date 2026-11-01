@@ -1,0 +1,271 @@
+From aaa1f9f1807898f3d116f260c16f2f7b5fcc3446 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 12:34:31 +0900
+Subject: [PATCH 10/11] rdprail: send only what changed, and repaint after an
+ acknowledgement when an update was skipped
+
+* gfxredir: copy the new content to a scratch buffer, compare it with the shared memory buffer the client has
+  and copy/present only the bounding box of the differences (nothing at all if the frame is identical).
+  Clients like kitty report their whole surface as damaged at each frame; msrdc then processed megabytes per
+  frame, acknowledged late and the compositor had to skip updates.
+* When a frame update is skipped because of unacknowledged frames, the queued damage was only repainted with the
+  next commit of the client (the last change showed up one keystroke late). Now the acknowledgement, which
+  arrives in a FreeRDP thread, asks the compositor thread for a repaint.
+---
+ include/libweston/backend-rdp.h |   2 +
+ libweston/backend-rdp/rdp.h     |   3 +
+ libweston/backend-rdp/rdprail.c | 146 +++++++++++++++++++++++++++++++-
+ 3 files changed, 148 insertions(+), 3 deletions(-)
+
+diff --git a/include/libweston/backend-rdp.h b/include/libweston/backend-rdp.h
+index cc367e2d..a0fb08c1 100644
+--- a/include/libweston/backend-rdp.h
++++ b/include/libweston/backend-rdp.h
+@@ -274,6 +274,8 @@ struct weston_surface_rail_state {
+ 	uint32_t pool_id;
+ 	uint32_t buffer_id;
+ 	void *surfaceBuffer;
++	void *diff_scratch;	/* new content of a frame, compared with surfaceBuffer to find what really changed */
++	size_t diff_scratch_size;
+ 	struct weston_rdp_shared_memory shared_memory;
+ 
+ 	/* rdpgfx surface */
+diff --git a/libweston/backend-rdp/rdp.h b/libweston/backend-rdp/rdp.h
+index 261bb9fa..3253607f 100644
+--- a/libweston/backend-rdp/rdp.h
++++ b/libweston/backend-rdp/rdp.h
+@@ -296,6 +296,9 @@ struct rdp_peer_context {
+ 	uint32_t currentFrameId;
+ 	uint32_t acknowledgedFrameId;
+ 	bool isAcknowledgedSuspended;
++	/* A RAIL frame update was skipped because the client had not acknowledged the previous frames yet: the damage
++	 * stays queued and must be repainted when an acknowledgement arrives. Used by both threads, atomically. */
++	bool frameSkipped;
+ 	struct wl_client *clientExec;
+ 	struct wl_listener clientExec_destroy_listener;
+ 	struct weston_surface *cursorSurface;
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index 8f6abe5f..11cfd702 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -1204,6 +1204,116 @@ rail_grfx_client_cache_import_offer(RdpgfxServerContext *context,
+     return context->CacheImportReply(context, &reply);
+ }
+ 
++/* Clients like kitty report the whole surface as damaged at every frame although only a few cells changed.
++ * Sending all of it makes the client (msrdc) process megabytes per frame, it acknowledges late and the compositor
++ * has to skip updates. So the new content is copied to a scratch buffer first and compared with what the client
++ * already has (the shared memory buffer): only the rows/columns that differ are copied and reported as dirty. */
++static uint8_t *
++rdp_rail_get_diff_scratch(struct weston_surface_rail_state *rail_state, size_t size)
++{
++	if (rail_state->diff_scratch_size < size) {
++		void *p = realloc(rail_state->diff_scratch, size);
++
++		if (!p)
++			return NULL;
++		rail_state->diff_scratch = p;
++		rail_state->diff_scratch_size = size;
++	}
++	return rail_state->diff_scratch;
++}
++
++static void
++rdp_rail_free_diff_scratch(struct weston_surface_rail_state *rail_state)
++{
++	free(rail_state->diff_scratch);
++	rail_state->diff_scratch = NULL;
++	rail_state->diff_scratch_size = 0;
++}
++
++/* Compare the region (x, y, w, h) (pixels, 32 bit) of scratch and shared. Differing parts are copied to shared, and the
++ * region is narrowed to the bounding box of the differences. Returns false if nothing differs. */
++static bool
++rdp_rail_diff_copy_region(const uint8_t *scratch, uint8_t *shared, int stride,
++			  int *x, int *y, int *w, int *h)
++{
++	int x0 = *x, x1 = *x + *w, y0 = *y, y1 = *y + *h;
++	int minx = x1, maxx = x0 - 1, miny = -1, maxy = -1;
++	int len = x1 - x0;
++
++	for (int row = y0; row < y1; row++) {
++		const uint32_t *n = (const uint32_t *)(scratch + (size_t)row * stride) + x0;
++		uint32_t *o = (uint32_t *)(shared + (size_t)row * stride) + x0;
++		int first = 0, last = len - 1;
++
++		if (memcmp(n, o, (size_t)len * 4) == 0)
++			continue;
++
++		while (n[first] == o[first])
++			first++;
++		while (n[last] == o[last])
++			last--;
++
++		memcpy(o + first, n + first, (size_t)(last - first + 1) * 4);
++
++		if (miny < 0)
++			miny = row;
++		maxy = row;
++		if (x0 + first < minx)
++			minx = x0 + first;
++		if (x0 + last > maxx)
++			maxx = x0 + last;
++	}
++
++	if (miny < 0)
++		return false;
++
++	*x = minx;
++	*y = miny;
++	*w = maxx - minx + 1;
++	*h = maxy - miny + 1;
++	return true;
++}
++
++/* The acknowledgement of a frame arrives in a FreeRDP thread. If the compositor skipped a frame update because too many
++ * frames were unacknowledged, the damage that was not sent is still queued (rail_state->damage) but nothing schedules
++ * a repaint for it: the last change would only show up with the next commit of the client ("one stroke late").
++ * So, after an acknowledgement, ask the compositor thread for a repaint if an update was skipped. */
++struct rdp_repaint_kick_task {
++	struct rdp_loop_task _base;
++};
++
++static void
++rdp_repaint_kick_callback(bool freeOnly, void *dataIn)
++{
++	struct rdp_repaint_kick_task *task = wl_container_of(dataIn, task, _base);
++
++	if (!freeOnly) {
++		RdpPeerContext *peer_ctx = task->_base.peerCtx;
++
++		weston_compositor_schedule_repaint(peer_ctx->rdpBackend->compositor);
++	}
++	free(task);
++}
++
++static void
++rdp_rail_kick_repaint_after_ack(RdpPeerContext *peer_ctx)
++{
++	struct rdp_repaint_kick_task *task;
++
++	if (!__atomic_exchange_n(&peer_ctx->frameSkipped, false, __ATOMIC_SEQ_CST))
++		return;
++
++	task = xzalloc(sizeof *task);
++	rdp_dispatch_task_to_display_loop(peer_ctx, rdp_repaint_kick_callback, &task->_base);
++}
++
++/* compositor thread, idle: repaint after the current repaint is over */
++static void
++rdp_rail_repaint_idle(void *data)
++{
++	weston_compositor_schedule_repaint(data);
++}
++
+ static UINT
+ rail_grfx_client_frame_acknowledge(RdpgfxServerContext *context,
+ 				   const RDPGFX_FRAME_ACKNOWLEDGE_PDU *frameAcknowledge)
+@@ -1213,8 +1323,9 @@ rail_grfx_client_frame_acknowledge(RdpgfxServerContext *context,
+ 	struct rdp_backend *b = peer_ctx->rdpBackend;
+ 	rdp_debug_verbose(b, "Client: GrfxFrameAcknowledge(queueDepth = 0x%x, frameId = 0x%x, decodedFrame = %d)\n",
+ 			  frameAcknowledge->queueDepth, frameAcknowledge->frameId, frameAcknowledge->totalFramesDecoded);
+-	peer_ctx->acknowledgedFrameId = frameAcknowledge->frameId;
++	__atomic_store_n(&peer_ctx->acknowledgedFrameId, frameAcknowledge->frameId, __ATOMIC_SEQ_CST);
+ 	peer_ctx->isAcknowledgedSuspended = (frameAcknowledge->queueDepth == 0xffffffff);
++	rdp_rail_kick_repaint_after_ack(peer_ctx);
+ 	return CHANNEL_RC_OK;
+ }
+ 
+@@ -1333,7 +1444,7 @@ gfxredir_client_present_buffer_ack(GfxRedirServerContext *context,
+ 			  "Client: gfxredir_present_buffer_ack: presentId:0x%lx\n",
+ 			  presentAck->presentId);
+ 
+-	peer_ctx->acknowledgedFrameId = (uint32_t)presentAck->presentId;
++	__atomic_store_n(&peer_ctx->acknowledgedFrameId, (uint32_t)presentAck->presentId, __ATOMIC_SEQ_CST);
+ 
+ 	/* when accessing ID outside of wayland display loop thread, aquire lock */
+ 	rdp_id_manager_lock(&peer_ctx->windowId);
+@@ -1349,6 +1460,8 @@ gfxredir_client_present_buffer_ack(GfxRedirServerContext *context,
+ 	}
+ 	rdp_id_manager_unlock(&peer_ctx->windowId);
+ 
++	rdp_rail_kick_repaint_after_ack(peer_ctx);
++
+ 	return CHANNEL_RC_OK;
+ }
+ #endif /* HAVE_FREERDP_GFXREDIR_H */
+@@ -1825,6 +1938,7 @@ rdp_destroy_shared_buffer(struct weston_surface *surface)
+ 	rdp_free_shared_memory(b, &rail_state->shared_memory);
+ 
+ 	rail_state->surfaceBuffer = NULL;
++	rdp_rail_free_diff_scratch(rail_state);
+ }
+ #endif /* HAVE_FREERDP_GFXREDIR_H */
+ 
+@@ -1919,6 +2033,7 @@ rdp_rail_destroy_window(struct wl_listener *listener, void *data)
+ 		}
+ 	}
+ 	pixman_region32_fini(&rail_state->damage);
++	rdp_rail_free_diff_scratch(rail_state);
+ 
+ 	rdp_id_manager_free_id(&peer_ctx->windowId, window_id);
+ 	rail_state->window_id = 0;
+@@ -2770,8 +2885,11 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 						  scaleFactorWidth,
+ 						  scaleFactorHeight);
+ 
++				uint8_t *scratch = rdp_rail_get_diff_scratch(rail_state, copy_buffer_size);
++				BYTE *copy_dest = scratch ? scratch + copyStartOffset : copy_buffer_bits;
++
+ 				if (weston_surface_copy_content(surface,
+-								copy_buffer_bits,
++								copy_dest,
+ 								copy_buffer_size,
+ 								copy_buffer_stride,
+ 								copy_damage_width,
+@@ -2796,6 +2914,15 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 					return -1;
+ 				}
+ 
++				if (scratch) {
++					/* only send what really changed, and nothing if nothing did */
++					if (!rdp_rail_diff_copy_region(scratch, rail_state->surfaceBuffer,
++								       copy_buffer_stride,
++								       &copy_damage_x1, &copy_damage_y1,
++								       &copy_damage_width, &copy_damage_height))
++						goto gfxredir_present_done;
++				}
++
+ 				GFXREDIR_PRESENT_BUFFER_PDU present_buffer = {};
+ 				RECTANGLE_32 opaque_rect;
+ 
+@@ -2834,6 +2961,8 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 							"PresentBuffer failed for windowId:0x%x\n",
+ 							window_id);
+ 				}
++gfxredir_present_done:
++				;
+ 			} else
+ #endif /* HAVE_FREERDP_GFXREDIR_H */
+ 			if (rail_state->surface_id) {
+@@ -3236,6 +3365,17 @@ rdp_rail_output_repaint(struct weston_output *output,
+ 				  peer_ctx->currentFrameId,
+ 				  peer_ctx->acknowledgedFrameId,
+ 				  peer_ctx->isAcknowledgedSuspended);
++
++		/* Remember it, the next acknowledgement repaints (see rdp_rail_kick_repaint_after_ack()). */
++		__atomic_store_n(&peer_ctx->frameSkipped, true, __ATOMIC_SEQ_CST);
++		if (peer_ctx->isAcknowledgedSuspended ||
++		    ((peer_ctx->currentFrameId -
++		      __atomic_load_n(&peer_ctx->acknowledgedFrameId, __ATOMIC_SEQ_CST)) < 2)) {
++			/* the acknowledgement came in meanwhile: repaint right after this repaint */
++			__atomic_store_n(&peer_ctx->frameSkipped, false, __ATOMIC_SEQ_CST);
++			wl_event_loop_add_idle(wl_display_get_event_loop(ec->wl_display),
++					       rdp_rail_repaint_idle, ec);
++		}
+ 	}
+ 	return;
+ }
+-- 
+2.56.0
+

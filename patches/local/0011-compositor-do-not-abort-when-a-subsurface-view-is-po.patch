@@ -1,0 +1,36 @@
+From b3dd7b0e9adf6ba491419e5a4baa82b4d27aa59f Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 12:34:31 +0900
+Subject: [PATCH 11/11] compositor: do not abort when a subsurface view is
+ positioned as cursor sprite or drag icon
+
+weston_view_set_position_with_offset() asserted that the view is not a subsurface's. A client can pass a surface
+that the RDP RAIL shell already handled as a window as pointer cursor, which aborted the whole compositor.
+---
+ libweston/compositor.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/libweston/compositor.c b/libweston/compositor.c
+index f4677a3f..6d9111f0 100644
+--- a/libweston/compositor.c
++++ b/libweston/compositor.c
+@@ -2123,8 +2123,14 @@ weston_view_set_position_with_offset(struct weston_view *view,
+ 	struct weston_coord_surface origin_s;
+ 	struct weston_coord_global origin_g, newpos;
+ 
+-	assert(view->surface->committed != subsurface_committed);
+-	assert(!view->geometry.parent);
++	/* Cursor sprites and drag icons are positioned here. A client can hand in a surface that is (or was) a
++	 * subsurface, e.g. one that the RDP RAIL shell already treated as a window; this used to abort the compositor. */
++	if (view->surface->committed == subsurface_committed || view->geometry.parent) {
++		weston_log("%s: ignoring a view of a subsurface/child view (surface %p, role %s)\n",
++			   __func__, view->surface,
++			   view->surface->role_name ? view->surface->role_name : "(none)");
++		return;
++	}
+ 
+ 	/* We need up to date transform matrices */
+ 	weston_view_set_position(view, pos);
+-- 
+2.56.0
+

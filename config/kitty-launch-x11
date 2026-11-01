@@ -1,0 +1,68 @@
+#!/bin/zsh
+# kitty WSLg direct launcher
+# Windows 側から直接呼び出す用
+
+# 環境変数の読み込み (.zshenv → $ZDOTDIR/.zshenv)
+source ~/.zshenv
+
+# DBus と X11 が準備できるまで待機
+retry=0
+while [ $retry -lt 20 ]; do
+  [ -S /run/user/1000/bus ] && xdpyinfo -display :0 > /dev/null 2>&1 && break
+  sleep 0.5
+  retry=$((retry + 1))
+done
+
+# Fcitx5 起動
+if [ -z "$(pgrep -x fcitx5)" ]; then
+  fcitx5 -d --replace --disable=wayland,waylandim > /dev/null 2>&1
+  sleep 0.5
+fi
+
+# kitty 起動 (フォアグラウンド、WSL プロセスを維持するため)
+log_dir="$HOME/.local/share/kitty"
+mkdir -p "$log_dir"
+log_file="$log_dir/kitty-$(date +%Y-%m-%d).log"
+echo "--- $(date '+%Y-%m-%d %H:%M:%S') [direct launch] ---" >> "$log_file"
+
+# WSLg のモニタ斜め配置で左上に死角ができ、窓がそこに開くと WSLg 側が中身のない
+# 空枠として表示してしまう(「起動しない」ように見える)問題への対策。
+# 起動後、この launch の窓をメインモニタ(XWAYLAND1: +1920+0)へ移動して前面化する。
+#  - exec は PID を引き継ぐため、exec 後の kitty の PID = この $$。それを窓の
+#    _NET_WM_PID(getwindowpid)と突き合わせて対象窓を厳密に特定する。
+#  - WSLg は窓を一旦画面外に置いてから配置する。「載ったら即終了」だと直後に死角へ
+#    蹴り出されるので、連続 stable_need 回 載りっぱなしを確認するまで粘って上書きに勝つ。
+#  - mover は setsid -f で別セッションへ切り離し、exec した kitty と無関係に走り切らせる。
+case "$1" in
+  --version|--help|-h|+*) ;;
+  *)
+    setsid -f zsh -c '
+      export DISPLAY=:0
+      kp=$1
+      wid=""
+      for i in {1..60}; do
+        for w in ${(f)"$(xdotool search --class kitty 2>/dev/null)"}; do
+          [[ "$(xdotool getwindowpid "$w" 2>/dev/null)" == "$kp" ]] && { wid=$w; break; }
+        done
+        [[ -n "$wid" ]] && break
+        sleep 0.15
+      done
+      [[ -z "$wid" ]] && exit 0
+      xdotool windowmap "$wid" 2>/dev/null
+      stable=0 stable_need=5
+      for i in {1..50}; do
+        eval "$(xdotool getwindowgeometry --shell "$wid" 2>/dev/null)"
+        if (( X >= 1920 )); then
+          (( stable++ )); (( stable >= stable_need )) && break
+        else
+          xdotool windowmove "$wid" 2000 100 2>/dev/null; stable=0
+        fi
+        sleep 0.2
+      done
+      xdotool windowactivate "$wid" 2>/dev/null
+    ' zsh "$$" >/dev/null 2>&1
+    ;;
+esac
+
+cd ~
+exec /usr/bin/kitty "$@" >> "$log_file" 2>&1

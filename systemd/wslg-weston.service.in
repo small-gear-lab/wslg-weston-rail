@@ -1,0 +1,11 @@
+[Unit]
+Description=Use the RAIL-patched Weston in WSLg (see @REPO@)
+ConditionPathExists=@REPO@/scripts/ensure.sh
+
+[Service]
+Type=simple
+ExecStart=/bin/sh @REPO@/scripts/ensure.sh
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

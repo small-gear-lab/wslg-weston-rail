@@ -1,0 +1,6 @@
+subsurface-test
+*.h
+!subsurface-test.h
+xdg-shell.c
+viewporter.c
+single-pixel-buffer-v1.c

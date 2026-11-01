@@ -1,0 +1,106 @@
+From 13fc34afb05db534108b7cdeb72b13451a143f73 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 10:41:49 +0900
+Subject: [PATCH 03/11] xwayland: make WESTON_DISABLE_ABSTRACT_FD work
+
+The abstract socket can be left unbound, but the code kept using abstract_fd as if it were open:
+
+- weston_xwayland_listen() never set abstract_fd (or unix_fd) to -1. zalloc() leaves 0, so fd 0
+  was registered as an event source and closed at shutdown.
+- weston_xserver_shutdown() removed abstract_source without checking it.
+- the failure paths of weston_xwayland_listen() freed wxs although weston_xserver_destroy()
+  was already registered as its owner, a use after free when the compositor was destroyed.
+- spawn_xserver() put abstract_fd in the list of fds to un-CLOEXEC and passed it to Xwayland as
+  -listenfd even when it is -1, so Xwayland was never started.
+---
+ frontend/xwayland.c | 13 +++++++++----
+ xwayland/launcher.c | 17 ++++++++++++-----
+ 2 files changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/frontend/xwayland.c b/frontend/xwayland.c
+index 8d80a048..f4b48a00 100644
+--- a/frontend/xwayland.c
++++ b/frontend/xwayland.c
+@@ -142,8 +142,11 @@ spawn_xserver(void *user_data, const char *display, int abstract_fd, int unix_fd
+ 	fdstr_update_str1(&display_pipe);
+ 	no_cloexec_fds[num_no_cloexec_fds++] = display_pipe.fds[1];
+ 
+-	fdstr_set_fd1(&x11_abstract_socket, abstract_fd);
+-	no_cloexec_fds[num_no_cloexec_fds++] = abstract_fd;
++	/* abstract_fd is -1 when the abstract socket is not used (WESTON_DISABLE_ABSTRACT_FD) */
++	if (abstract_fd >= 0) {
++		fdstr_set_fd1(&x11_abstract_socket, abstract_fd);
++		no_cloexec_fds[num_no_cloexec_fds++] = abstract_fd;
++	}
+ 
+ 	fdstr_set_fd1(&x11_unix_socket, unix_fd);
+ 	no_cloexec_fds[num_no_cloexec_fds++] = unix_fd;
+@@ -159,8 +162,10 @@ spawn_xserver(void *user_data, const char *display, int abstract_fd, int unix_fd
+ 	custom_env_add_arg(&child_env, xserver);
+ 	custom_env_add_arg(&child_env, display);
+ 	custom_env_add_arg(&child_env, "-rootless");
+-	custom_env_add_arg(&child_env, LISTEN_STR);
+-	custom_env_add_arg(&child_env, x11_abstract_socket.str1);
++	if (abstract_fd >= 0) {
++		custom_env_add_arg(&child_env, LISTEN_STR);
++		custom_env_add_arg(&child_env, x11_abstract_socket.str1);
++	}
+ 	custom_env_add_arg(&child_env, LISTEN_STR);
+ 	custom_env_add_arg(&child_env, x11_unix_socket.str1);
+ 	custom_env_add_arg(&child_env, "-displayfd");
+diff --git a/xwayland/launcher.c b/xwayland/launcher.c
+index 7eb0b3cd..98a4c77e 100644
+--- a/xwayland/launcher.c
++++ b/xwayland/launcher.c
+@@ -88,13 +88,17 @@ weston_xserver_shutdown(struct weston_xserver *wxs)
+ 		wl_client_destroy(wxs->client);
+ 		wxs->client = NULL;
+ 	} else {
+-		wl_event_source_remove(wxs->abstract_source);
+-		wl_event_source_remove(wxs->unix_source);
++		if (wxs->abstract_source)
++			wl_event_source_remove(wxs->abstract_source);
++		if (wxs->unix_source)
++			wl_event_source_remove(wxs->unix_source);
+ 	}
+ 	if (wxs->abstract_fd != -1) {
+ 		close(wxs->abstract_fd);
+ 	}
+-	close(wxs->unix_fd);
++	if (wxs->unix_fd != -1) {
++		close(wxs->unix_fd);
++	}
+ 	if (wxs->wm) {
+ 		weston_wm_destroy(wxs->wm);
+ 		wxs->wm = NULL;
+@@ -277,6 +281,11 @@ weston_xwayland_listen(struct weston_xwayland *xwayland, void *user_data,
+ 	wxs->user_data = user_data;
+ 	wxs->spawn_func = spawn_func;
+ 
++	/* zalloc() leaves the fds at 0 (stdin): without this, a build that does not bind the
++	 * abstract socket would register fd 0 as an event source and close it at shutdown. */
++	wxs->abstract_fd = -1;
++	wxs->unix_fd = -1;
++
+ 	bool disable_abstract_fd = getenv("WESTON_DISABLE_ABSTRACT_FD") ? true : false;
+ 
+ retry:
+@@ -287,7 +296,6 @@ retry:
+ 			wxs->display++;
+ 			goto retry;
+ 		} else {
+-			free(wxs);
+ 			return -1;
+ 		}
+ 	}
+@@ -309,7 +317,6 @@ retry:
+ 		if (wxs->abstract_fd != -1) {
+ 			close(wxs->abstract_fd);
+ 		}
+-		free(wxs);
+ 		return -1;
+ 	}
+ 
+-- 
+2.56.0
+

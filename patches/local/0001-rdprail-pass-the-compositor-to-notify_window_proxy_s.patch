@@ -1,0 +1,68 @@
+From 4229ce0f756cf12091287e75ed45ef572e31e7e1 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 10:24:55 +0900
+Subject: [PATCH 01/11] rdprail: pass the compositor to
+ notify_window_proxy_surface (it is called with NULL to reset the focus proxy)
+
+---
+ desktop-shell/shell.c           | 4 ++--
+ include/libweston/backend-rdp.h | 3 ++-
+ libweston/backend-rdp/rdprail.c | 5 +++--
+ 3 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 7b57441a..6ea56b00 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -2630,7 +2630,7 @@ desktop_surface_removed(struct weston_desktop_surface *desktop_surface,
+ 		if (shsurf->shell->focus_proxy_surface == surface) {
+ 			shsurf->shell->focus_proxy_surface = NULL;
+ 			if (shsurf->shell->rdprail_api->notify_window_proxy_surface)
+-				shsurf->shell->rdprail_api->notify_window_proxy_surface(NULL);
++				shsurf->shell->rdprail_api->notify_window_proxy_surface(shsurf->shell->compositor, NULL);
+ 		}
+ 	}
+ 
+@@ -5903,7 +5903,7 @@ rdprail_shell_set_focus_proxy(struct wl_client *client,
+ 	}
+ 
+ 	if (shell->rdprail_api->notify_window_proxy_surface)
+-		shell->rdprail_api->notify_window_proxy_surface(surface);
++		shell->rdprail_api->notify_window_proxy_surface(shell->compositor, surface);
+ 
+ 	shell->focus_proxy_surface = surface;
+ 
+diff --git a/include/libweston/backend-rdp.h b/include/libweston/backend-rdp.h
+index 5796f5ee..cc367e2d 100644
+--- a/include/libweston/backend-rdp.h
++++ b/include/libweston/backend-rdp.h
+@@ -207,7 +207,8 @@ struct weston_rdprail_api {
+ 
+ 	/** Notify window proxy surface
+ 	 */
+-	void (*notify_window_proxy_surface)(struct weston_surface *proxy_surface);
++	void (*notify_window_proxy_surface)(struct weston_compositor *compositor,
++					    struct weston_surface *proxy_surface);
+ };
+ 
+ static inline const struct weston_rdprail_api *
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index 9ecdf4a9..7b0275ef 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -3665,9 +3665,10 @@ error_exit:
+ }
+ 
+ static void
+-rdp_rail_notify_window_proxy_surface(struct weston_surface *proxy_surface)
++rdp_rail_notify_window_proxy_surface(struct weston_compositor *compositor,
++				     struct weston_surface *proxy_surface)
+ {
+-	struct rdp_backend *b = to_rdp_backend(proxy_surface->compositor);
++	struct rdp_backend *b = to_rdp_backend(compositor);
+ 
+ 	assert_compositor_thread(b);
+ 
+-- 
+2.56.0
+

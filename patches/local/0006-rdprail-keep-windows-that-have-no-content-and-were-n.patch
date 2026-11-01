@@ -1,0 +1,35 @@
+From 3305850e27facdb7cac5cbc49f1c00dc59b30771 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 11:32:02 +0900
+Subject: [PATCH 06/11] rdprail: keep windows that have no content and were
+ never shown hidden, without a taskbar button
+
+A window is created hidden and without a taskbar button. rdp_rail_update_window() shows it and gives it a button as
+soon as its size goes from 0 to something, but libweston keeps a size for a surface that has no buffer (what the shell
+configured), so the focus proxy window and another content-less toplevel got an empty taskbar button each (msrdc then
+asked for their app id: 'does not have appId, or not top level window').
+---
+ libweston/backend-rdp/rdprail.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index a097e092..9bae0f19 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -2072,6 +2072,13 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 		}
+ 	}
+ 
++	/* A window with no content (nothing attached yet, or unmapped) that was never shown to the client stays as it was
++	 * created: hidden and without a taskbar button. libweston may still remember a size for such a surface (what the
++	 * shell configured), which made the code below see "no size -> some size", show the window and put a button in the
++	 * taskbar: two empty taskbar icons for windows that have nothing to show. */
++	if (!weston_surface_has_content(surface) && rail_state->output == NULL)
++		return 0;
++
+ 	/* some spews for future investigation */
+ 	{
+ 		if (surface->width == 0 || surface->height == 0)
+-- 
+2.56.0
+

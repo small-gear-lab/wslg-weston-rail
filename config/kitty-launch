@@ -1,0 +1,51 @@
+#!/bin/zsh
+# kitty WSLg direct launcher (Wayland native)
+# Windows 側から直接呼び出す用: wsl.exe -d Ubuntu -- <このファイルを置いたパス>/kitty-launch
+#
+# kitty は Wayland ネイティブで動かし、日本語入力は text-input-v3 -> (独自 Weston) -> fcitx5 の
+# zwp_input_method_v1 経由で行う。X11 版が必要なら kitty-launch-x11 を使う。
+
+# 環境変数の読み込み (.zshenv → $ZDOTDIR/.zshenv)
+source ~/.zshenv
+
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+
+# DBus・Wayland・X11 (fcitx5 と XWayland アプリ用) が準備できるまで待機
+retry=0
+while [ $retry -lt 20 ]; do
+  [ -S "$XDG_RUNTIME_DIR/bus" ] && [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && xdpyinfo -display :0 > /dev/null 2>&1 && break
+  sleep 0.5
+  retry=$((retry + 1))
+done
+
+# Fcitx5 起動。wayland / waylandim を無効にした古い fcitx5 や、WAYLAND_DISPLAY の無い環境で
+# 起動された fcitx5 は Weston の input_method に繋がれないので、その場合は入れ替える。
+need_fcitx=1
+for pid in $(pgrep -x fcitx5); do
+  cmd="$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)"
+  if [[ "$cmd" != *--disable=*wayland* ]] && tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep -q '^WAYLAND_DISPLAY='; then
+    need_fcitx=0
+  fi
+done
+if (( need_fcitx )); then
+  fcitx5 -d --replace > /dev/null 2>&1
+  sleep 1
+fi
+
+# kitty 起動 (フォアグラウンド、WSL プロセスを維持するため)
+log_dir="$HOME/.local/share/kitty"
+mkdir -p "$log_dir"
+log_file="$log_dir/kitty-$(date +%Y-%m-%d).log"
+echo "--- $(date '+%Y-%m-%d %H:%M:%S') [direct launch, wayland] ---" >> "$log_file"
+
+cd ~
+case "$1" in
+  --version|--help|-h|+*)
+    exec /usr/bin/kitty "$@" >> "$log_file" 2>&1
+    ;;
+esac
+
+# GLFW_IM_MODULE=ibus が残っていると kitty は text-input-v3 ではなく ibus を使ってしまう
+unset GLFW_IM_MODULE
+exec /usr/bin/kitty -o linux_display_server=wayland -o wayland_enable_ime=yes "$@" >> "$log_file" 2>&1

@@ -1,0 +1,40 @@
+From 5f5b4b47b23eca6d9fb53f6f65a72491a8c869d4 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 11:38:09 +0900
+Subject: [PATCH 07/11] rdprail: decide 'no content' from the buffer size,
+ report why in the warning
+
+weston_surface_has_content() did not catch the two windows (focus proxy and another content-less toplevel): the log shows
+buffer size 0x0 for both while libweston keeps a size for the surface. Test the buffer size instead, and print has_content,
+is_mapped and the outputs in the 'surface width/height doesn't match with buffer' warning.
+---
+ libweston/backend-rdp/rdprail.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index 9bae0f19..8f6abe5f 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -2076,7 +2076,8 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 	 * created: hidden and without a taskbar button. libweston may still remember a size for such a surface (what the
+ 	 * shell configured), which made the code below see "no size -> some size", show the window and put a button in the
+ 	 * taskbar: two empty taskbar icons for windows that have nothing to show. */
+-	if (!weston_surface_has_content(surface) && rail_state->output == NULL)
++	if ((surface->width_from_buffer == 0 || surface->height_from_buffer == 0) &&
++	    rail_state->output == NULL)
+ 		return 0;
+ 
+ 	/* some spews for future investigation */
+@@ -2089,6 +2090,9 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 				rdp_debug(b, "surface width/height doesn't match with buffer (windowId:0x%x)\n", window_id);
+ 				rdp_debug(b, "	surface width %d, height %d\n", surface->width, surface->height);
+ 				rdp_debug(b, "	buffer width %d, height %d\n", surface->width_from_buffer, surface->height_from_buffer);
++				rdp_debug(b, "	has_content:%d is_mapped:%d rail output:%p surface output:%p\n",
++					  weston_surface_has_content(surface), surface->is_mapped,
++					  (void *)rail_state->output, (void *)surface->output);
+ 		}
+ 
+ 		static const struct weston_matrix identity = {
+-- 
+2.56.0
+

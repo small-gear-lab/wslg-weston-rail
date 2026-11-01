@@ -1,0 +1,38 @@
+From dbedd49561d0af963705c338d2b4a401f0c81986 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 10:28:47 +0900
+Subject: [PATCH 02/11] rdprail: do not destroy the debug bindings in
+ rdp_rail_destroy
+
+weston_compositor_destroy() calls weston_compositor_shutdown(), which frees every
+binding list, before it destroys the backends. rdp_rail_destroy() ran after that and
+called weston_binding_destroy() on bindings that were already freed, so wl_list_remove()
+crashed when Weston quit.
+---
+ libweston/backend-rdp/rdprail.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index 7b0275ef..a097e092 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -5118,11 +5118,11 @@ rdp_rail_destroy(struct rdp_backend *b)
+ 
+ 	free(b->rdprail_shell_name);
+ 
+-	if (b->debug_binding_M)
+-		weston_binding_destroy(b->debug_binding_M);
+-
+-	if (b->debug_binding_W)
+-		weston_binding_destroy(b->debug_binding_W);
++	/* The debug bindings are owned by the compositor: weston_compositor_shutdown()
++	 * already freed every binding list before the backend is destroyed, so
++	 * destroying them here would free them a second time. */
++	b->debug_binding_M = NULL;
++	b->debug_binding_W = NULL;
+ 
+ #if defined(HAVE_FREERDP_RDPAPPLIST_H)
+ 	if (b->libRDPApplistServer)
+-- 
+2.56.0
+

@@ -1,0 +1,54 @@
+#!/bin/sh
+# /usr/bin/weston in the WSLg system distro -- EXPERIMENTAL wrapper (installed by scripts/install.sh, @REPO@ is filled in).
+# WSLGd starts this with its usual arguments. It runs the Ubuntu-built, RAIL-patched Weston from the
+# Ubuntu distro (visible read-only under /mnt/wslg/distro) instead of WSLg's Weston 9, and falls back
+# to the original Weston (saved as /usr/libexec/weston-original) when the custom one cannot be used
+# or keeps failing: from the 3rd start within 60 seconds on, the original is used.
+ORIG=/usr/libexec/weston-original
+LOG=/mnt/wslg/weston-wrapper.log
+STATE=/tmp/weston-wrapper.state
+U=/mnt/wslg/distro
+W=$U@REPO@
+[ -f "$W/config.env" ] && . "$W/config.env"
+P=$U$PREFIX
+
+log() { echo "$(date '+%F %T') $*" >>"$LOG" 2>/dev/null; }
+
+now=$(date +%s); n=0; last=0
+[ -r "$STATE" ] && read last n <"$STATE"
+if [ $((now - ${last:-0})) -lt 60 ]; then n=$(( ${n:-0} + 1 )); else n=1; fi
+echo "$now $n" >"$STATE" 2>/dev/null
+
+if [ "$n" -gt 2 ] || [ ! -x "$U/lib64/ld-linux-x86-64.so.2" ] || [ ! -f "$P/bin/weston" ] || [ ! -x "$W/wrap/weston" ]; then
+	log "fallback to the original weston (start #$n within 60s, or the custom build is not reachable)"
+	exec "$ORIG" "$@"
+fi
+
+# WSLGd hands over a listening vsock socket as the fd number in $USE_VSOCK. Upstream Weston wants it
+# as --external-listener-fd (no TLS is needed on that path).
+extra=""
+case "${USE_VSOCK:-}" in
+	''|*[!0-9]*) ;;
+	*) extra="--external-listener-fd=$USE_VSOCK" ;;
+esac
+unset USE_VSOCK
+
+# A Weston that was killed can leave Xwayland's lock and socket behind.
+if [ -r /tmp/.X0-lock ]; then
+	read xpid </tmp/.X0-lock
+	if [ -n "$xpid" ] && ! kill -0 "$xpid" 2>/dev/null; then
+		rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+		log "removed a stale X0 lock/socket (pid $xpid)"
+	fi
+fi
+
+export XKB_CONFIG_ROOT=$U/usr/share/X11/xkb
+export WESTON_DATA_DIR=$P/share/weston   # icons etc.: the compiled-in data dir is a path of the Ubuntu distro
+export WESTON_MODULE_MAP="rdp-backend.so=$P/lib/libweston-15/rdp-backend.so;gl-renderer.so=$P/lib/libweston-15/gl-renderer.so;xwayland.so=$P/lib/libweston-15/xwayland.so;rdprail-shell.so=$P/lib/weston/rdprail-shell.so;desktop-shell.so=$P/lib/weston/desktop-shell.so;wslgd-notify.so=$P/lib/weston/wslgd-notify.so;weston-keyboard=$W/wrap/weston-keyboard;weston-rdprail-shell=$W/wrap/weston-rdprail-shell;weston-desktop-shell=$W/wrap/weston-desktop-shell"
+
+log "start #$n: custom weston, args: $* $extra"
+cfg=""
+[ -f "$W/config/weston-wslg.ini" ] && cfg="--config=$W/config/weston-wslg.ini"
+# Debug aid: touch <repo>/VERBOSE for the verbose RDP scope (a later option wins).
+[ -f "$W/VERBOSE" ] && extra="$extra --logger-scopes=log,rdp-backend,rdp-backend-verbose,rdprail-shell"
+exec "$W/wrap/weston" "$@" $extra $cfg

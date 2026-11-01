@@ -1,0 +1,63 @@
+From dba1188cb70b9db1ee2a1fa39bd214f03064257e Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 11:59:16 +0900
+Subject: [PATCH 08/11] rdp: send frame callbacks and presentation feedback to
+ occluded surfaces in RAIL mode
+
+In RAIL mode every surface is a window of its own on the client, so a surface covered by another one
+in the compositor's scene is still visible there. weston_output_repaint() withheld the frame callbacks of
+occluded surfaces, which stalled clients such as a nested KWin (black single-pixel toplevel completely
+covered by its content subsurface): it waited forever for the frame callback and never drew again.
+---
+ include/libweston/libweston.h | 5 +++++
+ libweston/backend-rdp/rdp.c   | 3 +++
+ libweston/compositor.c        | 3 ++-
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/include/libweston/libweston.h b/include/libweston/libweston.h
+index 0b26e2ee..2c74019a 100644
+--- a/include/libweston/libweston.h
++++ b/include/libweston/libweston.h
+@@ -562,6 +562,11 @@ struct weston_output {
+ 
+ 	struct weston_backend *backend;
+ 
++	/** Every surface is shown by the client as a window of its own (RDP RAIL), so a surface that is
++	 * covered by another one in the compositor's scene is still visible there: frame callbacks and
++	 * presentation feedback must not be withheld from it. */
++	bool frame_done_when_occluded;
++
+ 	/** Matches the lifetime from the user perspective */
+ 	struct wl_signal user_destroy_signal;
+ 
+diff --git a/libweston/backend-rdp/rdp.c b/libweston/backend-rdp/rdp.c
+index 1628fbad..3ade3457 100644
+--- a/libweston/backend-rdp/rdp.c
++++ b/libweston/backend-rdp/rdp.c
+@@ -321,6 +321,9 @@ rdp_output_repaint(struct weston_output *output_base)
+ 	if (b->rdp_peer &&
+ 		b->rdp_peer->context->settings->HiDefRemoteApp) {
+ 		/* RAIL mode, repaint RAIL window */
++		/* Each surface is a window of its own on the client: "covered" in our scene does not mean hidden.
++		 * (Set here, not in rdp_output_enable(): the RAIL peer is not known yet when outputs are enabled.) */
++		output_base->frame_done_when_occluded = true;
+ 		rdp_rail_output_repaint(output_base, &damage);
+ 	} else {
+ 		ec->renderer->repaint_output(&output->base, &damage,
+diff --git a/libweston/compositor.c b/libweston/compositor.c
+index dd45210c..f4677a3f 100644
+--- a/libweston/compositor.c
++++ b/libweston/compositor.c
+@@ -3875,7 +3875,8 @@ weston_output_repaint(struct weston_output *output, struct timespec *now)
+ 		 * feedback to the respective lists if pnode/surface is
+ 		 * occluded
+ 		 */
+-		if (!pixman_region32_not_empty(&pnode->visible))
++		if (!output->frame_done_when_occluded &&
++		    !pixman_region32_not_empty(&pnode->visible))
+ 			continue;
+ 
+ 		wl_list_insert_list(&frame_callback_list,
+-- 
+2.56.0
+

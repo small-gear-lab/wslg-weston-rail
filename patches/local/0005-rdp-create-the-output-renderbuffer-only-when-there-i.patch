@@ -1,0 +1,42 @@
+From 3229c05ed5e1f785d1c327ea96a88cb1347a7305 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 10:58:13 +0900
+Subject: [PATCH 05/11] rdp: create the output renderbuffer only when there is
+ a renderer output (not in RAIL mode)
+
+rdp_output_enable() skips the renderer output state in RAIL mode (HiDefRemoteApp), where the windows are remoted by
+rdp_rail_output_repaint() and rdp_output_disable() destroys neither the renderbuffer nor the renderer output, but it
+still created the renderbuffer. pixman_renderer_create_renderbuffer() asserts that there is an output state, so the
+second monitor that msrdc announces after connecting aborted Weston.
+---
+ libweston/backend-rdp/rdp.c | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/libweston/backend-rdp/rdp.c b/libweston/backend-rdp/rdp.c
+index f69d89e1..1628fbad 100644
+--- a/libweston/backend-rdp/rdp.c
++++ b/libweston/backend-rdp/rdp.c
+@@ -580,12 +580,15 @@ rdp_output_enable(struct weston_output *base)
+ 		default:
+ 			unreachable("cannot have auto renderer at runtime");
+ 		}
+-    }
+ 
+-	output->buffer = rdp_buffer_create(output);
+-	if (output->buffer == NULL) {
+-		rdp_renderer_output_destroy(base);
+-		return -1;
++		/* Only here: in RAIL mode (HiDefRemoteApp) there is no renderer output state, the windows are
++		 * remoted by rdp_rail_output_repaint() and rdp_output_disable() destroys neither of the two.
++		 * create_renderbuffer() of the pixman renderer asserts when there is no output state. */
++		output->buffer = rdp_buffer_create(output);
++		if (output->buffer == NULL) {
++			rdp_renderer_output_destroy(base);
++			return -1;
++		}
+ 	}
+ 
+ 	loop = wl_display_get_event_loop(b->compositor->wl_display);
+-- 
+2.56.0
+
