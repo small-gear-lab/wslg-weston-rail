@@ -66,8 +66,19 @@ fcitx5 を `waylandim` 有効で起動し、kitty は `GLFW_IM_MODULE` を外し
 
 ## ライセンスと出典
 
-- `patches/mr1667/1667.patch` は、Weston の MR !1667（gpotter2 作）。出典: https://gitlab.freedesktop.org/wayland/weston/-/merge_requests/1667
-- Weston は MIT ライセンス。`patches/local/` は Weston のコードへの変更で、同じ条件に従う。
-- このリポジトリのスクリプトと文書のライセンスは、未定。
-- `rdp-backend` に組み込んだ RSA 2048 の鍵と証明書（パッチ 0004）は、公開されている使い捨てのもの。暗号化なしの
-  ローカル接続（vsock）で、FreeRDP 3 が証明書を要求するために置いてある。秘密ではなく、通信の保護にも使っていない。
+このリポジトリのスクリプト、文書、設定、テストクライアント、`src/` は、[MIT](LICENSE-MIT) または
+[Apache-2.0](LICENSE-APACHE) のどちらかを選んで利用できる。特に明記しない限り、このプロジェクトに投稿されたものも、
+追加の条件なしに同じ条件で提供される。
+
+`patches/` は、この選択の**対象外**:
+
+- `patches/mr1667/1667.patch` は、Weston の MR !1667（gpotter2 ほか、RDP-RAIL の部分は Microsoft の WSLg フォーク由来）。
+  **無改変**で、元の作者の著作権と、Weston のファイルのライセンス（MIT）に従う。
+  出典: https://gitlab.freedesktop.org/wayland/weston/-/merge_requests/1667
+- `patches/local/` は、Weston のファイルへの変更で、そのファイルのライセンス（Weston の MIT）に従う。そのまま upstream に
+  出せるようにするため。詳細は [patches/README.md](patches/README.md)。
+
+使っている第三者のソフトウェアは [NOTICE](NOTICE) を参照。
+
+なお、`rdp-backend` に組み込んだ RSA 2048 の鍵と証明書（パッチ 0004）は、公開されている使い捨てのもの。暗号化なしの
+ローカル接続（vsock）で、FreeRDP 3 が証明書を要求するために置いてある。秘密ではなく、通信の保護にも使っていない。

@@ -1,0 +1,25 @@
+wslg-weston-rail
+Copyright 2026 Small Gear Lab
+Copyright 2026 Marie
+
+The scripts, documents, configuration, test client and the stand-in module (src/) of this repository are
+licensed under MIT OR Apache-2.0 (LICENSE-MIT, LICENSE-APACHE).
+
+The patches in patches/ are not covered by that choice:
+
+patches/mr1667/1667.patch, Weston merge request !1667 (RDP-RAIL support), unmodified.
+  Authors: gpotter2 and contributors. The RDP-RAIL code derives from Microsoft's WSLg Weston fork
+  (Copyright (c) 2020 Microsoft, under the Weston license; see the headers of the files).
+  https://gitlab.freedesktop.org/wayland/weston/-/merge_requests/1667
+
+patches/local/*.patch, changes to Weston files. They are under the license of the files they modify, the Weston
+  license (MIT). Weston (COPYING): Copyright (c) 2008-2012 Kristian Hoegsberg, 2010-2012 Intel Corporation,
+  2010-2011 Benjamin Franzke, 2011-2012 Collabora, Ltd., 2010 Red Hat; individual files name further holders.
+  https://gitlab.freedesktop.org/wayland/weston
+
+Third-party software that is used when building and running the result (not part of this repository):
+
+Weston (MIT), https://gitlab.freedesktop.org/wayland/weston  (cloned by scripts/fetch-sources.sh)
+FreeRDP and WinPR (Apache-2.0), https://www.freerdp.com  (the distribution's source, fetched by scripts/fetch-sources.sh
+  and built with the gfxredir channel enabled; no changes to its code)
+wayland and wayland-protocols (MIT), used to build test/subsurface-test
