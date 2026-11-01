@@ -1,0 +1,48 @@
+From c3bed755024c662e2d8e86859cfbff898c62c302 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 18:42:51 +0900
+Subject: [PATCH] rdprail: no taskbar button for input method panels, and keep
+ it when a window is shown again
+
+The candidate window of an input method (fcitx5) is an "input panel" surface.
+Only windows with a parent, without a label or labelled "child window" were
+kept out of the taskbar, so every candidate window got a taskbar button. Treat
+"input panel" like "child window".
+
+Also, when a window that had no size gets one (a window shown again), the code
+sent TaskbarButton = 0 unconditionally, because the label based decision is not
+repeated. Send the value remembered from the label decision instead, so that
+windows that are shown and hidden repeatedly (candidate windows, sub-surface
+windows) do not get a taskbar button each time.
+---
+ libweston/backend-rdp/rdprail.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/libweston/backend-rdp/rdprail.c b/libweston/backend-rdp/rdprail.c
+index 11cfd702..004edfdc 100644
+--- a/libweston/backend-rdp/rdprail.c
++++ b/libweston/backend-rdp/rdprail.c
+@@ -2441,6 +2441,9 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 						 in taskbar. */
+ 				if (strncmp(window_title, "child window", sizeof("child window") - 1) == 0)
+ 					window_state_order.TaskbarButton = 1;
++				/* input method panels (e.g. the candidate window of fcitx5) are not applications either */
++				if (strncmp(window_title, "input panel", sizeof("input panel") - 1) == 0)
++					window_state_order.TaskbarButton = 1;
+ 				title = strchr(window_title, '\'');
+ 				if (title) {
+ 					char *end = strrchr(window_title, '\'');
+@@ -2569,7 +2572,9 @@ rdp_rail_update_window(struct weston_surface *surface,
+ 				if ((window_order_info.fieldFlags & WINDOW_ORDER_FIELD_TASKBAR_BUTTON) == 0) {
+ 					window_order_info.fieldFlags |=
+ 						WINDOW_ORDER_FIELD_TASKBAR_BUTTON;
+-					window_state_order.TaskbarButton = 0;
++					/* keep what was decided from the label: a window that is shown again (the candidate
++					 * window of an input method, for example) must not get a taskbar button each time */
++					window_state_order.TaskbarButton = (BYTE)rail_state->taskbarButton;
+ 				}
+ 				if ((window_order_info.fieldFlags & WINDOW_ORDER_FIELD_SHOW) == 0) {
+ 					window_order_info.fieldFlags |=
+-- 
+2.56.0
+
