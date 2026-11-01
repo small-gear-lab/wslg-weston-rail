@@ -32,6 +32,7 @@ WSLGd は、FontMonitor が `xset +fp …` を Xwayland に対して**同期的�
 | タスクバーのアイコンのタイトルが `[WARN:COPY MODE]` で、窓の中身が無い | FreeRDP が gfxredir 無しでビルドされている。または `use-shared-memory=true` が無い。 |
 | `server supports only NLA Security` で msrdc が切断する | 標準 RDP セキュリティ（暗号化なし）を提供していない（パッチ 0004）。 |
 | 空のタスクバーアイコンが 2 つ出る | 内容の無い窓を表示している（パッチ 0006、0007）。 |
+| 日本語入力の候補ウィンドウが、出るたびにタスクバーに現れる | `input panel` のラベルの窓が、タスクバーの対象になっていた。再表示のたびにボタンが戻っていた（パッチ 0013）。 |
 | 入れ子の KWin が黒いまま、描かれない | 覆われたサーフェスに frame callback が来ない（パッチ 0008）。 |
 | 窓の移動やリサイズができず、タイトルバーも無い | msrdc が窓の枠を出さない。CSD の無いクライアント（入れ子のコンポジタなど）は動かせない。 |
 | `Detected an unmapped surface or view in the layer list, which should not occur.` | 起動直後のログに出る。実害は確認していない。 |
