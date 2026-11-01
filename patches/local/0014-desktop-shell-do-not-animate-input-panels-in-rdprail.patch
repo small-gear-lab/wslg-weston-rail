@@ -1,0 +1,33 @@
+From 4d7040b602402af14bafe87a7fa73c71f352df06 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 18:48:32 +0900
+Subject: [PATCH] desktop-shell: do not animate input panels in rdprail-shell
+
+show_input_panel_surface() slides the panel in from below, with a spring that
+overshoots. With RAIL every step moves a real window on the client, so the
+candidate window of an input method slid in and bounced at its final position
+each time it was shown. Skip the animation when the shell runs with the rdprail
+API; the behaviour of desktop-shell is unchanged.
+---
+ desktop-shell/input-panel.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/desktop-shell/input-panel.c b/desktop-shell/input-panel.c
+index ba910126..76be598a 100644
+--- a/desktop-shell/input-panel.c
++++ b/desktop-shell/input-panel.c
+@@ -114,6 +114,11 @@ show_input_panel_surface(struct input_panel_surface *ipsurf)
+ 		break;
+ 	}
+ 
++	/* In rdprail-shell, every step of the animation moves a real window on the client (it slides in
++	 * from below and bounces at the final position each time the panel is shown): do not animate. */
++	if (shell->rdprail_api)
++		return;
++
+ 	if (ipsurf->anim)
+ 		weston_view_animation_destroy(ipsurf->anim);
+ 
+-- 
+2.56.0
+
