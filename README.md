@@ -10,6 +10,9 @@ WSLg の Weston を、upstream ベースの Weston（RDP-RAIL パッチ入り）
 >   このリポジトリの手順では再実行していない。動いている環境は、同じ内容の元のスクリプトで作った。
 > - WSLg のシステムディストロの `/usr/bin/weston` を差し替える。誤ると、WSLg の GUI が起動しなくなることがある
 >   （元の Weston への自動フォールバックと、[ロールバック手順](docs/operations.md)はある）。
+> - **設計図から作ったものではなく、動かして観察し、仮説を立てて直すことを繰り返した最終状態の記録。** 理由を全部理解した上で動いて
+>   いるわけではなく、「確認できた範囲では、たまたま動いている」可能性が高い。経緯と、当てになっていない点は
+>   [docs/history.md](docs/history.md) に書いた。
 > - 自己責任で、先に [docs/operations.md](docs/operations.md) と [docs/pitfalls.md](docs/pitfalls.md) を読むこと。
 
 目的は、WSLg 上で **kitty や fcitx5 を Wayland ネイティブで動かし、日本語入力まで通す**こと。
@@ -47,7 +50,7 @@ fcitx5 (Ubuntu 側、waylandim)                    msrdc.exe (Windows)
 | `systemd/` | WSL 起動のたびに適用し直す systemd unit のテンプレート。 |
 | `config/` | `weston-wslg.ini`、kitty のランチャー（Wayland 版と X11 版）。 |
 | `test/subsurface-test/` | サブサーフェスと frame callback の挙動を確かめるテストクライアント。 |
-| `docs/` | [仕組み](docs/architecture.md)、[パッチ](docs/patches.md)、[IME](docs/ime.md)、[運用](docs/operations.md)、[はまりどころ](docs/pitfalls.md)。 |
+| `docs/` | [経緯](docs/history.md)、[仕組み](docs/architecture.md)、[パッチ](docs/patches.md)、[IME](docs/ime.md)、[運用](docs/operations.md)、[はまりどころ](docs/pitfalls.md)。 |
 
 ## 手順の概要
 
