@@ -75,7 +75,21 @@ sudo <repo>/scripts/install-service.sh                                          
 fcitx5 を `waylandim` 有効で起動し、kitty は `GLFW_IM_MODULE` を外して Wayland で起動する
 （[docs/ime.md](docs/ime.md)、`config/kitty-launch`）。
 
-ビルドの依存パッケージは、`meson setup` が足りないものを報告するので、それに従って入れる。
+ビルドの依存パッケージ（Ubuntu 26.04 で、実際に入れたもの）:
+
+```sh
+sudo apt-get install -y --no-install-recommends meson ninja-build pkgconf wayland-protocols libwayland-dev \
+  libxkbcommon-dev libpixman-1-dev libcairo2-dev libpng-dev libjpeg-dev libinput-dev libdrm-dev libgbm-dev \
+  libegl-dev libgles-dev libudev-dev libevdev-dev libdisplay-info-dev libseat-dev libxcb1-dev \
+  libxcb-composite0-dev libxcb-xfixes0-dev libxcb-cursor-dev libxcb-image0-dev libxcb-render-util0-dev \
+  libxcursor-dev freerdp3-dev libwinpr3-dev librsvg2-dev libglib2.0-dev libpam0g-dev libsystemd-dev \
+  liblcms2-dev libmtdev-dev libpango1.0-dev libfreetype-dev libfontconfig-dev
+```
+
+これに加えて、`build-essential`、`git`、`cmake`（FreeRDP のビルド）、`libwayland-bin`（`wayland-scanner`、テストクライアント用）が
+要る。作者の環境では、これらは別の機会に入っていたので、上のコマンドには含まれていない。FreeRDP のソースを取るために、
+apt の `deb-src` も有効にしておく。**クリーンな環境での確認はしていない**ので、足りないものは `meson setup` / `cmake` の
+エラーに従って足すこと。
 
 ## ライセンスと出典
 
