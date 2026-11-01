@@ -32,6 +32,8 @@ WSLGd は、FontMonitor が `xset +fp …` を Xwayland に対して**同期的�
 | タスクバーのアイコンのタイトルが `[WARN:COPY MODE]` で、窓の中身が無い | FreeRDP が gfxredir 無しでビルドされている。または `use-shared-memory=true` が無い。 |
 | `server supports only NLA Security` で msrdc が切断する | 標準 RDP セキュリティ（暗号化なし）を提供していない（パッチ 0004）。 |
 | 空のタスクバーアイコンが 2 つ出る | 内容の無い窓を表示している（パッチ 0006、0007）。 |
+| 長い候補ウィンドウが、モニターの下にはみ出したままになる | 入力パネルの位置が、モニターの範囲を見ていなかった（パッチ 0015）。 |
+| 候補ウィンドウを出したら Weston が落ちて、そのあと IME がオンにならない | サブサーフェスのビューで位置を聞いて abort（パッチ 0015）。60 秒以内に 3 回起動すると、ラッパーが標準の Weston 9 に切り替えるので、`text-input-v3` が無くなって IME が効かなくなる（`/mnt/wslg/weston-wrapper.log` に `fallback to the original weston`）。 |
 | 候補ウィンドウが、出るたびに下からスライドインして、バウンドする | `desktop-shell` の入力パネルのアニメーション。RAIL では 1 コマごとに窓が動く（パッチ 0014）。 |
 | 日本語入力の候補ウィンドウが、出るたびにタスクバーに現れる | `input panel` のラベルの窓が、タスクバーの対象になっていた。再表示のたびにボタンが戻っていた（パッチ 0013）。 |
 | 入れ子の KWin が黒いまま、描かれない | 覆われたサーフェスに frame callback が来ない（パッチ 0008）。 |
@@ -83,6 +85,11 @@ ack が「遅れて」戻っていたのも、更新がまだ送られていな�
 | Windows の入力方式を、Google 日本語入力から変える | 変わらない |
 
 ## ランチャーの罠
+
+- **X11 版（`kitty-launch-x11`）は、fcitx5 が動いていないと、`--disable=wayland,waylandim` つきで起動する**。Weston を再起動すると、元の
+  fcitx5 は Wayland の接続を失って終了する。そのあとに X11 版を使うと、Wayland に繋がらない fcitx5 が残り、Wayland 版の kitty で
+  IME がオンにならない（`fcitx5 --replace` を前景で動かすと、`permission to bind input_method denied` や、Wayland の接続エラーが見える）。
+  Wayland 版（`kitty-launch`）は、そういう fcitx5 を見つけたら入れ替える。
 
 - `PATH` 上の `kitty` が、`/usr/bin/kitty` をバックグラウンドで起動して即終了するラッパーだと、`dbus-run-session` の親が
   終わって、同じセッションの fcitx5 が `Disconnected from DBus, exiting...` で落ちる。`/usr/bin/kitty` を直接呼ぶ。
