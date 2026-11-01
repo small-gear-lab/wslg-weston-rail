@@ -2,6 +2,16 @@
 
 WSLg の Weston を、upstream ベースの Weston（RDP-RAIL パッチ入り）に差し替える実験の記録とレシピ。
 
+> **注意: 実験段階の記録であり、保証はない。**
+>
+> - 作者の 1 つの環境（下の「状態」）でしか確認していない。
+> - **この手順を最初から通しで試したわけではない。** 確認したのは、パッチシリーズが指定のコミットにきれいに当たること、
+>   その木から Weston がビルドできること、スクリプトの文法までで、`install.sh` 以降（システムディストロへの導入、自動適用）は、
+>   このリポジトリの手順では再実行していない。動いている環境は、同じ内容の元のスクリプトで作った。
+> - WSLg のシステムディストロの `/usr/bin/weston` を差し替える。誤ると、WSLg の GUI が起動しなくなることがある
+>   （元の Weston への自動フォールバックと、[ロールバック手順](docs/operations.md)はある）。
+> - 自己責任で、先に [docs/operations.md](docs/operations.md) と [docs/pitfalls.md](docs/pitfalls.md) を読むこと。
+
 目的は、WSLg 上で **kitty や fcitx5 を Wayland ネイティブで動かし、日本語入力まで通す**こと。
 WSLg 同梱の Weston 9 は `text-input-v1` しか話せず、`input_method` も Weston 自身が起動したクライアントにしか
 bind させない。kitty（GLFW）が使う `text-input-v3` は使えず、fcitx5 も外から繋げなかった。
