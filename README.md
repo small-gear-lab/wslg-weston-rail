@@ -43,7 +43,7 @@ fcitx5 (Ubuntu 側、waylandim)                    msrdc.exe (Windows)
 | パス | 内容 |
 | --- | --- |
 | `patches/mr1667/1667.patch` | Weston の MR !1667（RDP-RAIL の upstream への移植、gpotter2 作）。**無改変**。 |
-| `patches/local/*.patch` | MR の上に重ねた 15 個の修正と機能（[docs/patches.md](docs/patches.md)）。 |
+| `patches/local/*.patch` | MR の上に重ねた 16 個の修正と機能（[docs/patches.md](docs/patches.md)）。 |
 | `scripts/` | 設定・ソース取得・ビルド・インストール・ロールバック・起動時の自動適用。 |
 | `wrap/` | システムディストロ内で、Ubuntu 側でビルドした Weston を Ubuntu のローダ経由で動かす。 |
 | `src/wslgd-notify.c` | WSLGd が待つ MS 製モジュール `wslgd-notify.so` の代用品。 |
@@ -86,8 +86,8 @@ sudo apt-get install -y --no-install-recommends meson ninja-build pkgconf waylan
   liblcms2-dev libmtdev-dev libpango1.0-dev libfreetype-dev libfontconfig-dev
 ```
 
-これに加えて、`build-essential`、`git`、`cmake`（FreeRDP のビルド）、`libwayland-bin`（`wayland-scanner`、テストクライアント用）が
-要る。作者の環境では、これらは別の機会に入っていたので、上のコマンドには含まれていない。FreeRDP のソースを取るために、
+これに加えて、`build-essential`、`git`、`cmake`（FreeRDP のビルド）、`libwayland-bin`（`wayland-scanner`、テストクライアント用）、`xwayland`（`xwayland.pc` のため。`-Dxwayland=true` の
+ビルドに要る）が要る。作者の環境では、これらは別の機会に入っていたので、上のコマンドには含まれていない。FreeRDP のソースを取るために、
 apt の `deb-src` も有効にしておく。**クリーンな環境での確認はしていない**ので、足りないものは `meson setup` / `cmake` の
 エラーに従って足すこと。
 

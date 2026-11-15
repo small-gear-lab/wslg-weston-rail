@@ -35,6 +35,7 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
 | 0009 | `zwp_text_input_manager_v3` を追加する。詳細は [ime.md](ime.md)。 |
 | 0010 | gfxredir で、変わった範囲だけを msrdc に送る。ack を受け取った後に、スキップされた更新を再描画する。**0012 の前に、「描画の遅れ」の原因を取り違えて入れたもの**で、0012 のあとにも必要かどうかは、外して比べていない（[pitfalls.md](pitfalls.md)）。 |
 | 0011 | カーソルのスプライトやドラッグアイコンの位置合わせで、サブサーフェスのビューが来ても abort しない。 |
+| 0016 | `xdg_activation_v1` を追加する。`activate` された窓を、Windows 側のクリックと同じ処理（`shell_backend_request_window_activate()`）で前面に出し、そのあと Z オーダーを msrdc に送る。Wayland のクライアントは、これが無いと自分で別の窓を前面にできない（winit の `Window::focus_window()` が何もしない。Neovide の窓の切り替えが効かなかった）。トークンは、このコンポジタが出したものだけを、1 回、30 秒だけ受け付ける。serial・app_id・surface は検査せず、seat を決めるだけに使う。RDP バックエンドの `notify_window_zorder_change()` は、呼び出し元が無く、Weston の中で起きた Z オーダーの変更が msrdc に届かなかったので、activate のあとに呼ぶ。 |
 
 ## 既知の未対応
 
@@ -42,3 +43,6 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
 - 0004 の鍵の組み込みは、upstream に出す形ではない（設定で切り替えられるようにするべき）。
 - 0011 は、原因の根本ではなく、アサーションを避けるだけ。kitty のカーソル用サーフェスが、先に RAIL の窓として扱われる経緯
   （ログに `cursor role is added after creation`）は、調べきれていない。
+- 0016 は、`xdg_activation_v1` の global が出ること（`wayland-info`）と、起動してクラッシュしないことまでを確認した。
+  Neovide からフォーカスが実際に移るかは、このコミットの時点では確かめていない。トークンの検証は緩い（serial を見ない）。
+  `zxdg_decoration_manager_v1` も無いので、winit は Wayland で自前のタイトルバーを描く（フォントは fontconfig の `sans-serif`）。
