@@ -1,0 +1,524 @@
+From c806d37b9e83cdee0574abd1fb47f0675372a9fe Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 12:51:20 +0900
+Subject: [PATCH] desktop-shell: add xdg-activation-v1, and tell msrdc about
+ the z order change
+
+A Wayland client cannot raise one of its own windows by itself: it needs
+xdg-activation-v1, which this compositor did not offer. winit's
+Window::focus_window() therefore did nothing (Neovide could not move the focus
+to another of its windows).
+
+Add the global. A client gets a token with get_activation_token + commit, and
+activate(token, surface) raises the surface the way a click on its window from
+the Windows side does (shell_backend_request_window_activate()). Only tokens
+handed out here are accepted, each one once and for 30 seconds. The serial,
+app_id and surface given to the token request are not checked; they only pick
+the seat.
+
+notify_window_zorder_change() of the RDP backend had no caller, so a z order
+change made inside Weston was never sent to the RDP client, and msrdc kept the
+old window in front. Call it after an activation.
+---
+ desktop-shell/meson.build      |   3 +
+ desktop-shell/shell.c          |   5 +
+ desktop-shell/shell.h          |  15 ++
+ desktop-shell/xdg-activation.c | 403 +++++++++++++++++++++++++++++++++
+ protocol/meson.build           |   1 +
+ 5 files changed, 427 insertions(+)
+ create mode 100644 desktop-shell/xdg-activation.c
+
+diff --git a/desktop-shell/meson.build b/desktop-shell/meson.build
+index e18ccf22..b083c9ba 100644
+--- a/desktop-shell/meson.build
++++ b/desktop-shell/meson.build
+@@ -7,6 +7,9 @@ if get_option('shell-desktop')
+ 	srcs_shell_desktop = [
+ 		'shell.c',
+ 		'input-panel.c',
++		'xdg-activation.c',
++		xdg_activation_v1_server_protocol_h,
++		xdg_activation_v1_protocol_c,
+ 		weston_desktop_shell_server_protocol_h,
+ 		weston_desktop_shell_protocol_c,
+ 		input_method_unstable_v1_server_protocol_h,
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 6ea56b00..5e00ca4e 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -5711,6 +5711,7 @@ shell_destroy(struct wl_listener *listener, void *data)
+ 
+ 	text_backend_destroy(shell->text_backend);
+ 	input_panel_destroy(shell);
++	xdg_activation_destroy(shell->xdg_activation);
+ 
+ 	if (shell->fade.animation) {
+ 		weston_view_animation_destroy(shell->fade.animation);
+@@ -5988,6 +5989,10 @@ wet_shell_init(struct weston_compositor *ec,
+ 	if (!shell->desktop)
+ 		return -1;
+ 
++	shell->xdg_activation = xdg_activation_create(shell);
++	if (!shell->xdg_activation)
++		return -1;
++
+ #ifdef BUILD_RAIL
+ 	if (shell->rail) {
+ 		if (wl_global_create(ec->wl_display,
+diff --git a/desktop-shell/shell.h b/desktop-shell/shell.h
+index c618055a..aedfe469 100644
+--- a/desktop-shell/shell.h
++++ b/desktop-shell/shell.h
+@@ -334,6 +334,7 @@ struct desktop_shell {
+ 	bool prepare_event_sent;
+ 
+ 	struct text_backend *text_backend;
++	struct xdg_activation *xdg_activation;
+ 
+ 	struct {
+ 		struct weston_surface *surface;
+@@ -444,6 +445,20 @@ input_panel_setup(struct desktop_shell *shell);
+ void
+ input_panel_destroy(struct desktop_shell *shell);
+ 
++/* Activates the surface (what a click on its window does). Defined in shell.c. */
++void
++shell_backend_request_window_activate(void *shell_context,
++				      struct weston_seat *seat,
++				      struct weston_surface *surface);
++
++/* xdg-activation-v1 (xdg-activation.c) */
++struct xdg_activation;
++
++struct xdg_activation *
++xdg_activation_create(struct desktop_shell *shell);
++void
++xdg_activation_destroy(struct xdg_activation *activation);
++
+ typedef void (*shell_for_each_layer_func_t)(struct desktop_shell *,
+ 						struct weston_layer *, void *);
+ 
+diff --git a/desktop-shell/xdg-activation.c b/desktop-shell/xdg-activation.c
+new file mode 100644
+index 00000000..03453128
+--- /dev/null
++++ b/desktop-shell/xdg-activation.c
+@@ -0,0 +1,403 @@
++/*
++ * Copyright © 2026 small-gear-lab
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++/*
++ * xdg-activation-v1 for the RAIL shell.
++ *
++ * A client that wants another of its windows (or a window of another client)
++ * in front asks for a token (xdg_activation_v1.get_activation_token) and then
++ * calls xdg_activation_v1.activate(token, surface). Without this protocol a
++ * Wayland client has no way to raise a window by itself (winit's
++ * Window::focus_window() does nothing).
++ *
++ * Policy: only tokens that this compositor handed out are accepted, each one
++ * once, for TOKEN_LIFETIME_MS. The serial, app_id and surface given to the
++ * token are not checked (the client is trusted the way every client of this
++ * single-user compositor is); they only pick the seat.
++ *
++ * The activation itself is the one a click from the Windows side does
++ * (shell_backend_request_window_activate()). Weston never tells the RDP
++ * client about a z order change on its own (notify_window_zorder_change() has
++ * no caller), so it is sent here, or msrdc would keep the old window in
++ * front.
++ */
++
++#include "config.h"
++
++#include <assert.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <sys/random.h>
++
++#include <libweston/libweston.h>
++
++#include "shell.h"
++#include "shared/helpers.h"
++#include "shared/xalloc.h"
++#include "xdg-activation-v1-server-protocol.h"
++
++#define TOKEN_LIFETIME_MS 30000
++#define TOKEN_MAX_ENTRIES 64
++#define TOKEN_RANDOM_BYTES 16
++
++struct xdg_activation {
++	struct desktop_shell *shell;
++	struct wl_global *global;
++	struct wl_list tokens; /* struct activation_token::link, oldest first */
++	int num_tokens;
++};
++
++struct activation_token {
++	struct wl_list link;
++	char value[TOKEN_RANDOM_BYTES * 2 + 1];
++	struct weston_seat *seat;
++	int64_t created_ms;
++};
++
++struct token_request {
++	struct xdg_activation *activation;
++	struct wl_resource *resource;
++	struct weston_seat *seat;
++	bool committed;
++};
++
++static int64_t
++now_ms(void)
++{
++	struct timespec ts;
++
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++}
++
++static void
++token_remove(struct xdg_activation *activation, struct activation_token *token)
++{
++	wl_list_remove(&token->link);
++	activation->num_tokens--;
++	free(token);
++}
++
++/* The list is in creation order, so the expired ones are at the front. */
++static void
++tokens_expire(struct xdg_activation *activation)
++{
++	struct activation_token *token, *tmp;
++	int64_t now = now_ms();
++
++	wl_list_for_each_safe(token, tmp, &activation->tokens, link) {
++		if (now - token->created_ms < TOKEN_LIFETIME_MS)
++			break;
++		token_remove(activation, token);
++	}
++}
++
++static struct weston_seat *
++default_seat(struct desktop_shell *shell)
++{
++	struct weston_seat *seat;
++
++	wl_list_for_each(seat, &shell->compositor->seat_list, link)
++		return seat;
++
++	return NULL;
++}
++
++static bool
++token_generate(char *out, size_t out_size)
++{
++	uint8_t raw[TOKEN_RANDOM_BYTES];
++	size_t i;
++
++	assert(out_size >= sizeof(raw) * 2 + 1);
++
++	if (getrandom(raw, sizeof(raw), 0) != (ssize_t)sizeof(raw))
++		return false;
++
++	for (i = 0; i < sizeof(raw); i++)
++		snprintf(out + i * 2, 3, "%02x", raw[i]);
++
++	return true;
++}
++
++/* ----- xdg_activation_token_v1 ----- */
++
++static void
++token_request_destroy_request(struct wl_client *client,
++			      struct wl_resource *resource)
++{
++	wl_resource_destroy(resource);
++}
++
++static void
++token_request_set_serial(struct wl_client *client,
++			 struct wl_resource *resource,
++			 uint32_t serial,
++			 struct wl_resource *seat_resource)
++{
++	struct token_request *req = wl_resource_get_user_data(resource);
++
++	if (req->committed) {
++		wl_resource_post_error(resource,
++				       XDG_ACTIVATION_TOKEN_V1_ERROR_ALREADY_USED,
++				       "token was already committed");
++		return;
++	}
++
++	/* The user data of a wl_seat resource is its weston_seat. */
++	req->seat = wl_resource_get_user_data(seat_resource);
++}
++
++static void
++token_request_set_app_id(struct wl_client *client,
++			 struct wl_resource *resource,
++			 const char *app_id)
++{
++	struct token_request *req = wl_resource_get_user_data(resource);
++
++	if (req->committed)
++		wl_resource_post_error(resource,
++				       XDG_ACTIVATION_TOKEN_V1_ERROR_ALREADY_USED,
++				       "token was already committed");
++}
++
++static void
++token_request_set_surface(struct wl_client *client,
++			  struct wl_resource *resource,
++			  struct wl_resource *surface_resource)
++{
++	struct token_request *req = wl_resource_get_user_data(resource);
++
++	if (req->committed)
++		wl_resource_post_error(resource,
++				       XDG_ACTIVATION_TOKEN_V1_ERROR_ALREADY_USED,
++				       "token was already committed");
++}
++
++static void
++token_request_commit(struct wl_client *client, struct wl_resource *resource)
++{
++	struct token_request *req = wl_resource_get_user_data(resource);
++	struct xdg_activation *activation = req->activation;
++	struct activation_token *token;
++
++	if (req->committed) {
++		wl_resource_post_error(resource,
++				       XDG_ACTIVATION_TOKEN_V1_ERROR_ALREADY_USED,
++				       "token was already committed");
++		return;
++	}
++	req->committed = true;
++
++	tokens_expire(activation);
++	while (activation->num_tokens >= TOKEN_MAX_ENTRIES) {
++		token = wl_container_of(activation->tokens.next, token, link);
++		token_remove(activation, token);
++	}
++
++	token = zalloc(sizeof *token);
++	if (!token) {
++		wl_resource_post_no_memory(resource);
++		return;
++	}
++	if (!token_generate(token->value, sizeof token->value)) {
++		free(token);
++		wl_resource_post_no_memory(resource); /* getrandom() failed */
++		return;
++	}
++	token->seat = req->seat ? req->seat : default_seat(activation->shell);
++	token->created_ms = now_ms();
++	wl_list_insert(activation->tokens.prev, &token->link);
++	activation->num_tokens++;
++
++	xdg_activation_token_v1_send_done(resource, token->value);
++}
++
++static const struct xdg_activation_token_v1_interface token_request_implementation = {
++	.set_serial = token_request_set_serial,
++	.set_app_id = token_request_set_app_id,
++	.set_surface = token_request_set_surface,
++	.commit = token_request_commit,
++	.destroy = token_request_destroy_request,
++};
++
++static void
++token_request_resource_destroyed(struct wl_resource *resource)
++{
++	struct token_request *req = wl_resource_get_user_data(resource);
++
++	free(req);
++}
++
++/* ----- xdg_activation_v1 ----- */
++
++static void
++activation_destroy_request(struct wl_client *client,
++			   struct wl_resource *resource)
++{
++	wl_resource_destroy(resource);
++}
++
++static void
++activation_get_activation_token(struct wl_client *client,
++				struct wl_resource *resource,
++				uint32_t id)
++{
++	struct xdg_activation *activation = wl_resource_get_user_data(resource);
++	struct token_request *req;
++	struct wl_resource *token_resource;
++
++	req = zalloc(sizeof *req);
++	if (!req) {
++		wl_client_post_no_memory(client);
++		return;
++	}
++	req->activation = activation;
++
++	token_resource = wl_resource_create(client,
++					    &xdg_activation_token_v1_interface,
++					    wl_resource_get_version(resource),
++					    id);
++	if (!token_resource) {
++		free(req);
++		wl_client_post_no_memory(client);
++		return;
++	}
++	req->resource = token_resource;
++
++	wl_resource_set_implementation(token_resource,
++				       &token_request_implementation, req,
++				       token_request_resource_destroyed);
++}
++
++static void
++activation_activate(struct wl_client *client,
++		    struct wl_resource *resource,
++		    const char *token_string,
++		    struct wl_resource *surface_resource)
++{
++	struct xdg_activation *activation = wl_resource_get_user_data(resource);
++	struct desktop_shell *shell = activation->shell;
++	struct weston_surface *surface;
++	struct activation_token *token, *found = NULL;
++	struct weston_seat *seat;
++
++	tokens_expire(activation);
++
++	wl_list_for_each(token, &activation->tokens, link) {
++		if (strcmp(token->value, token_string) == 0) {
++			found = token;
++			break;
++		}
++	}
++	if (!found) {
++		/* The protocol says an unknown token is not an error: the
++		 * compositor may ignore the request. */
++		weston_log("xdg-activation: activate ignored (unknown or expired token)\n");
++		return;
++	}
++
++	seat = found->seat ? found->seat : default_seat(shell);
++	token_remove(activation, found); /* a token works once */
++	if (!seat)
++		return;
++
++	surface = wl_resource_get_user_data(surface_resource);
++	if (!surface)
++		return;
++	surface = weston_surface_get_main_surface(surface);
++
++	shell_backend_request_window_activate(shell, seat, surface);
++
++#ifdef BUILD_RAIL
++	if (shell->rdprail_api && shell->rdprail_api->notify_window_zorder_change)
++		shell->rdprail_api->notify_window_zorder_change(shell->compositor);
++#endif
++}
++
++static const struct xdg_activation_v1_interface activation_implementation = {
++	.destroy = activation_destroy_request,
++	.get_activation_token = activation_get_activation_token,
++	.activate = activation_activate,
++};
++
++static void
++bind_activation(struct wl_client *client, void *data, uint32_t version,
++		uint32_t id)
++{
++	struct xdg_activation *activation = data;
++	struct wl_resource *resource;
++
++	resource = wl_resource_create(client, &xdg_activation_v1_interface,
++				      version, id);
++	if (!resource) {
++		wl_client_post_no_memory(client);
++		return;
++	}
++
++	wl_resource_set_implementation(resource, &activation_implementation,
++				       activation, NULL);
++}
++
++struct xdg_activation *
++xdg_activation_create(struct desktop_shell *shell)
++{
++	struct xdg_activation *activation;
++
++	activation = zalloc(sizeof *activation);
++	if (!activation)
++		return NULL;
++
++	activation->shell = shell;
++	wl_list_init(&activation->tokens);
++
++	activation->global = wl_global_create(shell->compositor->wl_display,
++					      &xdg_activation_v1_interface, 1,
++					      activation, bind_activation);
++	if (!activation->global) {
++		free(activation);
++		return NULL;
++	}
++
++	return activation;
++}
++
++void
++xdg_activation_destroy(struct xdg_activation *activation)
++{
++	struct activation_token *token, *tmp;
++
++	if (!activation)
++		return;
++
++	wl_global_destroy(activation->global);
++	wl_list_for_each_safe(token, tmp, &activation->tokens, link)
++		token_remove(activation, token);
++	free(activation);
++}
+diff --git a/protocol/meson.build b/protocol/meson.build
+index b91a88b3..82bb2e27 100644
+--- a/protocol/meson.build
++++ b/protocol/meson.build
+@@ -43,6 +43,7 @@ generated_protocols = [
+ 	[ 'weston-test', 'internal' ],
+ 	[ 'weston-touch-calibration', 'internal' ],
+ 	[ 'weston-direct-display', 'internal' ],
++	[ 'xdg-activation', 'staging', 'v1' ],
+ 	[ 'xdg-output', 'unstable', 'v1' ],
+ 	[ 'xdg-shell', 'unstable', 'v6' ],
+ 	[ 'xdg-shell', 'stable' ],
+-- 
+2.56.0
+
