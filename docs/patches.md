@@ -43,6 +43,7 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
 - 0004 の鍵の組み込みは、upstream に出す形ではない（設定で切り替えられるようにするべき）。
 - 0011 は、原因の根本ではなく、アサーションを避けるだけ。kitty のカーソル用サーフェスが、先に RAIL の窓として扱われる経緯
   （ログに `cursor role is added after creation`）は、調べきれていない。
-- 0016 は、`xdg_activation_v1` の global が出ること（`wayland-info`）と、起動してクラッシュしないことまでを確認した。
-  Neovide からフォーカスが実際に移るかは、このコミットの時点では確かめていない。トークンの検証は緩い（serial を見ない）。
+- 0016 は、`xdg_activation_v1` の global が出ること（`wayland-info`）と、起動してクラッシュしないこと、Neovide の
+  `<leader>W` で別の窓へフォーカスが移ることを確認した（Windows 11 + msrdc 1.2.7391、Neovide 0.17.2）。トークンの検証は
+  緩い（serial を見ない）。
   `zxdg_decoration_manager_v1` も無いので、winit は Wayland で自前のタイトルバーを描く（フォントは fontconfig の `sans-serif`）。
