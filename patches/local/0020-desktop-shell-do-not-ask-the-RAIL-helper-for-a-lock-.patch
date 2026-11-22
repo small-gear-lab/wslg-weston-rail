@@ -1,0 +1,39 @@
+From b7057e5f918b787600f19a76126659decf6bd7d2 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 10:21:14 +0900
+Subject: [PATCH 20/21] desktop-shell: do not ask the RAIL helper for a lock
+ surface
+
+In RAIL mode bind_desktop_shell() stores a weston_rdprail_shell resource in
+shell->child.desktop_shell. That interface has no events, but unlock() took
+the resource for a weston_desktop_shell one and sent prepare_lock_surface
+(opcode 1) to it. wl_resource_post_event() then read events[1] of an
+interface whose events are NULL and Weston died (SIGSEGV at address 0x20)
+at the first mouse move after the idle timeout had locked the shell.
+
+There is no client to ask for a lock surface in RAIL mode: unlock at once,
+the same as when the desktop-shell client has gone away.
+---
+ desktop-shell/shell.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 97f0d4d0..87d381b8 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -4582,8 +4582,10 @@ unlock(struct desktop_shell *shell)
+ 		return;
+ 	}
+ 
+-	/* If desktop-shell client has gone away, unlock immediately. */
+-	if (!shell->child.desktop_shell) {
++	/* If desktop-shell client has gone away, unlock immediately. In RAIL mode
++	 * shell->child.desktop_shell is the weston_rdprail_shell resource of the helper,
++	 * which has no events: there is no client to ask for a lock surface. */
++	if (!shell->child.desktop_shell || shell->rail) {
+ 		resume_desktop(shell);
+ 		return;
+ 	}
+-- 
+2.56.0
+
