@@ -38,6 +38,8 @@ WSLGd は、FontMonitor が `xset +fp …` を Xwayland に対して**同期的�
 | 日本語入力の候補ウィンドウが、出るたびにタスクバーに現れる | `input panel` のラベルの窓が、タスクバーの対象になっていた。再表示のたびにボタンが戻っていた（パッチ 0013）。 |
 | WSL の起動後、Windows 側から `kitty-launch` を 1 回目に呼ぶと窓が消えて、2 回目で立ち上がる | WSL の起動直後は、WSLg 標準の Weston 9 が動いていて、`ensure.sh` が数秒後にカスタム版へ差し替える（`restart-weston.sh`）。その前に立ち上がった kitty は、標準の Weston ごと落ちる。`config/kitty-launch` は、`/mnt/wslg/weston-wrapper.log` の最後の `start`・`fallback` の行で、差し替えが済むまで最大 60 秒待つ（自動適用が無効なら待たない）。Ubuntu 側からは、システムディストロの Weston のプロセスが見えないので、プロセスではなくログで見ている。 |
 | `desktop-shell.so` で SIGSEGV（`shell_backend_request_window_move`）。Neovide の窓を動かすと、GUI ごと落ちる | msrdc がトップレベルでない窓（app id の無い 16×16 の窓など）に `WindowMove` を送ると、shell surface の無いサーフェスで `assert(!shsurf->snapped.is_maximized_requested)` が NULL を参照した（パッチ 0017）。 |
+| 起動して 15 秒以内に窓をクリックすると、Weston が落ちる（`activate_binding`、`weston_surface_to_subsurface (surface=0x1)`） | 起動時のフェードの黒いカーテンが、全モニターを覆って入力を捕まえている（`desktop_ready` が来ないので、15 秒のタイマーまで残る）。フェードのカーテンは、全画面ウィンドウの黒背景と同じ `black_surface_committed` を使うので、`is_black_surface_view()` が取り違えて、その `committed_private`（`desktop_shell`）を view として使う。`[shell] startup-animation=none` でカーテンを作らない（`config/weston-wslg.ini`）。 |
+| 300 秒ほど操作せず、マウスを動かした瞬間に Weston が落ちる（`unlock` → `weston_desktop_shell_send_prepare_lock_surface`） | アイドルのタイムアウトで、desktop-shell が黒いカーテンを出してロックする。復帰のマウス移動で `unlock()` が走り、`weston-desktop-shell` クライアントの resource に送ろうとして落ちる（resource が有効かどうかの原因は未調査）。`[core] idle-time=0` で、アイドルのタイムアウトを切る（`config/weston-wslg.ini`）。 |
 | 入れ子の KWin が黒いまま、描かれない | 覆われたサーフェスに frame callback が来ない（パッチ 0008）。 |
 | 窓の移動やリサイズができず、タイトルバーも無い | msrdc が窓の枠を出さない。CSD の無いクライアント（入れ子のコンポジタなど）は動かせない。 |
 | `Detected an unmapped surface or view in the layer list, which should not occur.` | 起動直後のログに出る。実害は確認していない。 |
