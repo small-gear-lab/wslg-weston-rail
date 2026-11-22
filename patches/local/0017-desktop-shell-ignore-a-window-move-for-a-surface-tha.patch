@@ -1,0 +1,45 @@
+From ecedde596e4746d6d726f29d1e95f6e90b9edd69 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 09:39:56 +0900
+Subject: [PATCH] desktop-shell: ignore a window move for a surface that has no
+ shell surface
+
+shell_backend_request_window_move() looked up the shell surface of the
+surface, tolerated NULL in the is_localmove_pending check, and then
+dereferenced it unconditionally in
+assert(!shsurf->snapped.is_maximized_requested).
+
+msrdc also sends WindowMove for windows that are not top level windows
+(for example a 16x16 window at (0,0) that has no app id). Such a surface has
+a view but no shell surface, so Weston died with a NULL dereference
+(SIGSEGV at address 0x141, the offset of snapped.is_maximized_requested in
+struct shell_surface) as soon as one of them was reported.
+
+Return when there is no shell surface, as
+shell_backend_request_window_{minimize,maximize,restore,snap}() already do.
+A surface without a shell surface is not a window that a move can be
+requested for, so nothing is lost; the dead "shsurf &&" test is removed.
+---
+ desktop-shell/shell.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 5e00ca4e..97f0d4d0 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -6132,10 +6132,10 @@ shell_backend_request_window_move(struct weston_surface *surface, int x, int y,
+ 	struct weston_coord_global pos;
+ 
+ 	view = get_default_view(surface);
+-	if (!view)
++	if (!view || !shsurf)
+ 		return;
+ 
+-	if (shsurf && shsurf->shell->is_localmove_pending) {
++	if (shsurf->shell->is_localmove_pending) {
+ 		shsurf->shell->is_localmove_pending = false;
+ 	}
+ 
+-- 
+2.56.0
+
