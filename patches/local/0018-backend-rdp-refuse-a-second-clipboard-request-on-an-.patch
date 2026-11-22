@@ -1,0 +1,39 @@
+From 952602ca0c279bbccd78239a9808c522cc3547fa Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 17:12:24 +0900
+Subject: [PATCH] backend-rdp: refuse a second clipboard request on an
+ in-flight source instead of swapping its fd
+
+The old retry path overwrote source->data_source_fd while the event source
+stayed on the previous fd, so clipboard_data_source_write() aborted on
+assert(source->data_source_fd == fd) and the old fd leaked.
+---
+ libweston/backend-rdp/rdpclip.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/libweston/backend-rdp/rdpclip.c b/libweston/backend-rdp/rdpclip.c
+index 40dde44d..975b98bb 100644
+--- a/libweston/backend-rdp/rdpclip.c
++++ b/libweston/backend-rdp/rdpclip.c
+@@ -1067,10 +1067,14 @@ clipboard_data_source_send(struct weston_data_source *base,
+ 			   clipboard_data_source_state_to_string(ctx->clipboard_inflight_client_data_source),
+ 			   ctx->clipboard_inflight_client_data_source->data_source_fd);
+ 		if (source == ctx->clipboard_inflight_client_data_source) {
+-			/* when new source and previous source is same, update fd with new one and retry */
+-			source->state = RDP_CLIPBOARD_SOURCE_RETRY;
+-			ctx->clipboard_inflight_client_data_source->data_source_fd = fd;
+-			return;
++			/* Same source asked again while its previous request is still in
++			 * flight. The in-flight request owns data_source_fd and the event
++			 * source registered on it; replacing the fd here (as this code used
++			 * to) leaves the event source on the old fd, so clipboard_data_source_write()
++			 * later trips assert(source->data_source_fd == fd) and also leaks the
++			 * old fd. Leave the in-flight request alone and refuse the new fd:
++			 * it is closed below and the requester sees EOF. */
++			goto error_return_close_fd;
+ 		} else {
+ 			source->state = RDP_CLIPBOARD_SOURCE_FAILED;
+ 			goto error_return_close_fd;
+-- 
+2.56.0
+
