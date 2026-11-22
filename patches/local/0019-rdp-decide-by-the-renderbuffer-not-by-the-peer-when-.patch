@@ -1,0 +1,59 @@
+From da261ce65c2b80f4a20be04e61d7f3438a0b8150 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 10:18:39 +0900
+Subject: [PATCH] rdp: decide by the renderbuffer, not by the peer, when an
+ output is disabled
+
+rdp_output_enable() creates the renderer output state and the renderbuffer
+together, and only when the output is not in RAIL mode. rdp_output_disable()
+decided whether to destroy them by looking at the peer instead:
+!b->rdp_peer || !HiDefRemoteApp means "not RAIL". When Weston is stopped
+msrdc has usually gone already, b->rdp_peer is NULL even for an output that
+was enabled in RAIL mode, and rdp_buffer_destroy(NULL) crashed on
+buffer->output (SIGSEGV at address 0 in rdp_buffer_destroy()).
+
+Destroy what exists: only when output->buffer is set, which also means that
+the renderer output state exists.
+---
+ libweston/backend-rdp/rdp.c | 19 +++++++++----------
+ 1 file changed, 9 insertions(+), 10 deletions(-)
+
+diff --git a/libweston/backend-rdp/rdp.c b/libweston/backend-rdp/rdp.c
+index a98161c6..c45d9f0c 100644
+--- a/libweston/backend-rdp/rdp.c
++++ b/libweston/backend-rdp/rdp.c
+@@ -604,22 +604,21 @@ static int
+ rdp_output_disable(struct weston_output *base)
+ {
+ 	struct rdp_output *output = to_rdp_output(base);
+-	struct rdp_backend *b;
+ 
+ 	assert(output);
+ 
+ 	if (!output->base.enabled)
+ 		return 0;
+ 
+-    b = output->backend;
+-
+-	if (!b->rdp_peer || !b->rdp_peer->context->settings->HiDefRemoteApp) {
+-        /* Not RAIL */
+-
+-	    rdp_buffer_destroy(output->buffer);
+-	    output->buffer = NULL;
+-	    rdp_renderer_output_destroy(base);
+-    }
++	/* rdp_output_enable() creates the renderer output state and the renderbuffer together, and only when
++	 * it is not in RAIL mode. Decide by what exists, not by the current peer: when msrdc has already gone
++	 * (the normal case when Weston is stopped), b->rdp_peer is NULL even for an output that was enabled
++	 * in RAIL mode, where nothing was created. */
++	if (output->buffer) {
++		rdp_buffer_destroy(output->buffer);
++		output->buffer = NULL;
++		rdp_renderer_output_destroy(base);
++	}
+ 
+ 	wl_event_source_remove(output->finish_frame_timer);
+ 
+-- 
+2.56.0
+
