@@ -11,6 +11,21 @@ source ~/.zshenv
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
 
+# ensure.sh (wslg-weston.service) が、WSLg 標準の Weston をカスタム版に差し替えるまで待つ。
+# 差し替えは WSL の起動直後に 1 回あり、その前に起動した kitty は、標準の Weston ごと落ちて窓が消える
+# (1 回目だけ消えて、2 回目で立ち上がる)。Ubuntu 側からは Weston のプロセスが見えないので、ラッパーが
+# 書く /mnt/wslg/weston-wrapper.log の最後の start / fallback の行で、差し替えが済んだかを見る。
+# 自動適用が無効なら待たない。最大 60 秒で諦める。
+if systemctl is-enabled --quiet wslg-weston 2>/dev/null; then
+  retry=0
+  while [ $retry -lt 120 ]; do
+    last="$(grep -E 'custom weston|fallback' /mnt/wslg/weston-wrapper.log 2>/dev/null | tail -n 1)"
+    case "$last" in *'custom weston'*|*fallback*) break ;; esac
+    sleep 0.5
+    retry=$((retry + 1))
+  done
+fi
+
 # DBus・Wayland・X11 (fcitx5 と XWayland アプリ用) が準備できるまで待機
 retry=0
 while [ $retry -lt 20 ]; do
