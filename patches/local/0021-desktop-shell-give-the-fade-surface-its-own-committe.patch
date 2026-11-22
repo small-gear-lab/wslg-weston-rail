@@ -1,0 +1,56 @@
+From 72fa96165ca0358898cc81d28250a429d58af505 Mon Sep 17 00:00:00 2001
+From: marie-222 <289302950+marie-222@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 10:21:31 +0900
+Subject: [PATCH 21/21] desktop-shell: give the fade surface its own committed
+ handler
+
+The fade surface of shell_fade_create_view() used black_surface_committed,
+which is also the handler of the black background of a fullscreen window.
+is_black_surface_view() recognises that background by the handler and returns
+committed_private as the view of the fullscreen window, but the fade surface
+keeps the shell there. A click on the fade surface (it captures input) made
+activate_binding() use the shell as a view, and Weston died in
+weston_surface_to_subsurface() with surface == 0x1.
+
+In RAIL mode the fade surface of the startup stays for up to 15 s, because the
+desktop-shell client that would report ready is not there.
+
+Use a handler of its own: the fade surface is no longer taken for a fullscreen
+background, and activate_binding() ignores it because it has no shell surface.
+---
+ desktop-shell/shell.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 87d381b8..8c1b9faf 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -4624,6 +4624,16 @@ fade_surface_get_label(struct weston_surface *surface,
+ 	return snprintf(buf, len, "desktop shell fade surface");
+ }
+ 
++/* Not black_surface_committed: is_black_surface_view() takes a surface with that
++ * handler for the black background of a fullscreen window and returns its
++ * committed_private as the view of that window. The fade surface keeps the
++ * shell there. */
++static void
++fade_surface_committed(struct weston_surface *es,
++		       struct weston_coord_surface new_origin)
++{
++}
++
+ static struct weston_curtain *
+ shell_fade_create_view(struct desktop_shell *shell)
+ {
+@@ -4631,7 +4641,7 @@ shell_fade_create_view(struct desktop_shell *shell)
+ 	struct shell_output *shell_output;
+ 	struct weston_curtain_params curtain_params = {
+ 		.r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0,
+-		.surface_committed = black_surface_committed,
++		.surface_committed = fade_surface_committed,
+ 		.get_label = fade_surface_get_label,
+ 		.surface_private = shell,
+ 		.capture_input = true,
+-- 
+2.56.0
+
