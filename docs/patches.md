@@ -27,6 +27,7 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
 | 0013 | 入力メソッドのパネル（`input panel`）をタスクバーに出さない。再表示のとき、ラベルで決めた値を使う | fcitx5 の候補ウィンドウが、出るたびにタスクバーにボタンとして現れた。隠す条件が、親のある窓、ラベルの無い窓、`child window` だけだった。さらに、大きさの無かった窓が大きさを持つ（再表示）とき、`TaskbarButton = 0` を無条件で送っていて、ラベルの判定が繰り返されないため、一度隠す設定にしても、表示のたびにボタンが戻った。 |
 | 0014 | RAIL では、入力メソッドのパネルをアニメーションさせない | 日本語入力の候補ウィンドウが、変換のたびに下からスライドインして、規定の位置で何回かバウンドした。`desktop-shell` の `show_input_panel_surface()` が、パネルをバネ（行き過ぎて戻る）で滑り込ませていて、RAIL では、アニメーションの 1 コマごとに、クライアントの本物の窓が動いてしまう。`shell->rdprail_api` があるとき（rdprail-shell）は、アニメーションを走らせない。desktop-shell の挙動は変えない。 |
 | 0015 | 入力パネルを、テキストカーソルのあるモニターに収める。位置を聞く前に、メインのサーフェスに解決する | 長い候補ウィンドウが、モニターの下にはみ出したままだった（`calc_input_panel_position()` は、カーソルの右下に置くだけで、出力の範囲を見ていなかった）。カーソルを含む出力を探して、下にはみ出すならカーソルの上側に、横も範囲内に収める。また、キーボードフォーカスがサブサーフェス（クライアント側装飾など）にあるとき、`weston_view_get_pos_offset_global()` が assertion で abort したので、メインのサーフェスで位置を聞くようにした。 |
+| 0017 | ウィンドウ移動の要求で、shell surface の無いサーフェスは無視する | トップレベルでない窓（app id の無い 16×16 の窓など）に、msrdc が `WindowMove` を送ると、`shell_backend_request_window_move()` が NULL の `shsurf` を `assert(!shsurf->snapped.is_maximized_requested)` で参照して SIGSEGV になった（fault address `0x141` は、`struct shell_surface` の `snapped.is_maximized_requested` のオフセット）。直前の `if (shsurf && ...)` は NULL を想定していた。MR 由来のコードで、Neovide の窓を動かした直後に踏んだ。`minimize`・`maximize`・`restore`・`snap` と同じく、shell surface が無ければ返る。 |
 
 ## 機能と性能
 
@@ -47,3 +48,4 @@ MR のパッチは、そのままビルドでき、起動までは行くが、WS
   `<leader>W` で別の窓へフォーカスが移ることを確認した（Windows 11 + msrdc 1.2.7391、Neovide 0.17.2）。トークンの検証は
   緩い（serial を見ない）。
   `zxdg_decoration_manager_v1` も無いので、winit は Wayland で自前のタイトルバーを描く（フォントは fontconfig の `sans-serif`）。
+- 0017 は、実際のビルド設定でのコンパイル確認（`-fsyntax-only`）と、シリーズが `9d841e39` に当たることまでを確認した。再ビルドした Weston で、同じ操作（Neovide の窓を動かす）を試した確認はまだ。
